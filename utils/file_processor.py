@@ -450,9 +450,39 @@ class FileProcessor:
                         if file_path:
                             print(f"  ✅ Found markdown file in directory: {file_path}")
                         else:
-                            raise ValueError(
-                                f"No markdown file found in directory: {paper_dir}"
-                            )
+                            # Directory exists but is empty - check for _backup PDF file
+                            backup_pdf = paper_dir + "_backup"
+                            if os.path.isfile(backup_pdf):
+                                print(f"  ⚠️ No file in {paper_dir}, but found backup PDF: {backup_pdf}")
+                                # Convert PDF to markdown
+                                try:
+                                    from tools.pdf_downloader import DoclingConverter
+                                    converter = DoclingConverter()
+                                    md_path = os.path.join(paper_dir, "paper.md")
+                                    print(f"  📄 Converting PDF to markdown: {md_path}")
+                                    result = converter.convert_to_markdown(backup_pdf, md_path)
+                                    print(f"  ✅ PDF converted successfully")
+                                    file_path = md_path
+                                except Exception as e:
+                                    print(f"  ❌ PDF conversion failed: {e}")
+
+                            if not file_path:
+                                # Try to find in parent directory
+                                parent_dir = os.path.dirname(paper_dir)
+                                if os.path.isdir(parent_dir):
+                                    print(f"  ⚠️ Searching parent directory: {parent_dir}")
+                                    # Look for any markdown files in parent directory
+                                    for item in os.listdir(parent_dir):
+                                        item_path = os.path.join(parent_dir, item)
+                                        if os.path.isfile(item_path) and item.endswith('.md'):
+                                            file_path = item_path
+                                            print(f"  ✅ Found markdown in parent: {file_path}")
+                                            break
+
+                            if not file_path:
+                                raise ValueError(
+                                    f"No markdown file found in directory: {paper_dir}"
+                                )
                     else:
                         raise ValueError(f"Invalid paper directory: {paper_dir}")
 
