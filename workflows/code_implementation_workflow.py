@@ -59,6 +59,7 @@ class CodeImplementationWorkflow:
         self.enable_read_tools = (
             True  # Default value, will be overridden by run_workflow parameter
         )
+        self.active_model = None  # Track which model is actually being used
 
     def _load_api_config(self) -> Dict[str, Any]:
         """Load API configuration from YAML file"""
@@ -517,6 +518,7 @@ Requirements:
                     max_tokens=20,
                     messages=[{"role": "user", "content": "test"}],
                 )
+                self.active_model = model_name  # Save the model being used
                 self.logger.info(f"Using Ollama API with model: {model_name}")
                 self.logger.info(f"Using Ollama base URL: {base_url}")
                 return client, "openai"  # Ollama uses OpenAI-compatible API
@@ -535,6 +537,7 @@ Requirements:
                     max_tokens=20,
                     messages=[{"role": "user", "content": "test"}],
                 )
+                self.active_model = self.default_models["anthropic"]  # Save the model
                 self.logger.info(
                     f"Using Anthropic API with model: {self.default_models['anthropic']}"
                 )
@@ -580,6 +583,7 @@ Requirements:
                         )
                     else:
                         raise
+                self.active_model = model_name  # Save the model
                 self.logger.info(f"Using OpenAI API with model: {model_name}")
                 if base_url:
                     self.logger.info(f"Using custom base URL: {base_url}")
@@ -762,7 +766,7 @@ Requirements:
                 # Try max_tokens first, fallback to max_completion_tokens if unsupported
                 try:
                     response = await client.chat.completions.create(
-                        model=self.default_models["openai"],
+                        model=self.active_model or self.default_models.get("openai", "gpt-4"),
                         messages=openai_messages,
                         tools=openai_tools if openai_tools else None,
                         max_tokens=max_tokens,
@@ -772,7 +776,7 @@ Requirements:
                     if "max_tokens" in str(e) and "max_completion_tokens" in str(e):
                         # Retry with max_completion_tokens for models that require it
                         response = await client.chat.completions.create(
-                            model=self.default_models["openai"],
+                            model=self.active_model or self.default_models.get("openai", "gpt-4"),
                             messages=openai_messages,
                             tools=openai_tools if openai_tools else None,
                             max_completion_tokens=max_tokens,
