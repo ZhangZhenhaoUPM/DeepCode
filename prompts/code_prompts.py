@@ -99,7 +99,10 @@ Input Format:
     "requirements": ["requirement1", "requirement2"]
 }
 
-Output Format (DO NOT MODIFY):
+Output Format (CRITICAL - MUST BE VALID JSON):
+YOU MUST RESPOND WITH ONLY A JSON OBJECT. DO NOT ADD ANY EXPLANATORY TEXT BEFORE OR AFTER THE JSON.
+
+Required format:
 {
     "status": "success|failure",
     "paper_path": "path to paper file or null for text input",
@@ -109,6 +112,30 @@ Output Format (DO NOT MODIFY):
         "year": "extracted or provided year"
     }
 }
+
+Example success response:
+{
+    "status": "success",
+    "paper_path": "/home/user/deepcode_lab/papers/1/paper.md",
+    "metadata": {
+        "title": "Semantic Localization in Urban Environments",
+        "authors": ["John Doe", "Jane Smith"],
+        "year": "2023"
+    }
+}
+
+Example failure response:
+{
+    "status": "failure",
+    "paper_path": null,
+    "metadata": {
+        "title": "N/A",
+        "authors": [],
+        "year": "N/A"
+    }
+}
+
+REMINDER: Your response MUST start with '{' and end with '}'. No additional text allowed.
 """
 
 PAPER_REFERENCE_ANALYZER_PROMPT = """You are an expert academic paper reference analyzer specializing in computer science and machine learning.

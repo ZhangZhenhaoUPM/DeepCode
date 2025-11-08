@@ -460,7 +460,7 @@ class FileProcessor:
         """
         import re
 
-        # Try to find JSON in markdown code blocks
+        # Try to find JSON in markdown code blocks first
         json_pattern = r"```json\s*(\{.*?\})\s*```"
         match = re.search(json_pattern, text, re.DOTALL)
         if match:
@@ -469,13 +469,48 @@ class FileProcessor:
             except json.JSONDecodeError:
                 pass
 
-        # Try to find standalone JSON
-        json_pattern = r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})"
+        # Try to find JSON in plain code blocks
+        json_pattern = r"```\s*(\{.*?\})\s*```"
+        match = re.search(json_pattern, text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Try to find standalone JSON object (look for { ... } pattern)
+        # Find all potential JSON objects in the text
+        brace_count = 0
+        start_idx = -1
+
+        for i, char in enumerate(text):
+            if char == '{':
+                if brace_count == 0:
+                    start_idx = i
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0 and start_idx != -1:
+                    # Found a complete JSON object
+                    potential_json = text[start_idx:i+1]
+                    try:
+                        parsed = json.loads(potential_json)
+                        if isinstance(parsed, dict):
+                            # Check if it looks like our expected format
+                            if "paper_path" in parsed or "status" in parsed or "path" in parsed:
+                                return parsed
+                    except json.JSONDecodeError:
+                        # Continue looking for other JSON objects
+                        pass
+                    start_idx = -1
+
+        # Last resort: try simple regex pattern
+        json_pattern = r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}"
         matches = re.findall(json_pattern, text, re.DOTALL)
         for match in matches:
             try:
                 parsed = json.loads(match)
-                if isinstance(parsed, dict) and "paper_path" in parsed:
+                if isinstance(parsed, dict) and ("paper_path" in parsed or "path" in parsed or "status" in parsed):
                     return parsed
             except json.JSONDecodeError:
                 continue
