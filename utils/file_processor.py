@@ -414,16 +414,21 @@ class FileProcessor:
                             raise ValueError(f"Invalid input: {file_input}")
             else:
                 # Dictionary input
-                file_path = file_input.get("paper_path")
-                # If the file doesn't exist, try to find markdown in the directory
-                if file_path and not os.path.exists(file_path):
-                    paper_dir = os.path.dirname(file_path)
+                file_path = file_input.get("paper_path") or file_input.get("path")
+
+                # If paper_path is None or doesn't exist, try to find markdown in the directory
+                if not file_path or file_path == "None" or not os.path.exists(file_path):
+                    # Use paper_dir that was already extracted (with fallback logic)
                     if os.path.isdir(paper_dir):
                         file_path = cls.find_markdown_file(paper_dir)
-                        if not file_path:
+                        if file_path:
+                            print(f"  ✅ Found markdown file in directory: {file_path}")
+                        else:
                             raise ValueError(
                                 f"No markdown file found in directory: {paper_dir}"
                             )
+                    else:
+                        raise ValueError(f"Invalid paper directory: {paper_dir}")
 
             if not file_path:
                 raise ValueError("No valid file path found")
