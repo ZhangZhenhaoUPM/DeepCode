@@ -85,7 +85,13 @@ mcp:
         PYTHONPATH: .
 openai:
   base_max_tokens: 20000
-  default_model: google/gemini-2.5-pro
+  default_model: gemini-2.5-pro
   max_tokens_policy: adaptive
   retry_max_tokens: 32768
+ollama:
+  base_max_tokens: 32768
+  default_model: qwen3-coder:30b
+  max_tokens_policy: adaptive
+  retry_max_tokens: 32768
+default_llm_provider: ollama
 planning_mode: traditional

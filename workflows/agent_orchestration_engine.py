@@ -448,9 +448,12 @@ async def run_resource_processor(analysis_result: str, logger) -> str:
             temperature=0.2,
         )
 
-        return await processor.generate_str(
+        result = await processor.generate_str(
             message=analysis_result, request_params=processor_params
         )
+        logger.info(f"🔍 DEBUG: ResourceProcessor LLM returned: {result[:1000]}")
+        print(f"\n🔍 DEBUG: ResourceProcessor returned:\n{result}\n")
+        return result
 
 
 async def run_code_analyzer(

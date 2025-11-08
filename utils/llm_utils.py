@@ -12,43 +12,71 @@ from typing import Any, Type, Dict, Tuple
 # Import LLM classes
 from mcp_agent.workflows.llm.augmented_llm_anthropic import AnthropicAugmentedLLM
 from mcp_agent.workflows.llm.augmented_llm_openai import OpenAIAugmentedLLM
+from mcp_agent.workflows.llm.augmented_llm_ollama import OllamaAugmentedLLM
 
 
-def get_preferred_llm_class(config_path: str = "mcp_agent.secrets.yaml") -> Type[Any]:
+def get_preferred_llm_class(config_path: str = "mcp_agent.secrets.yaml", main_config_path: str = "mcp_agent.config.yaml") -> Type[Any]:
     """
-    Automatically select the LLM class based on API key availability in configuration.
+    Automatically select the LLM class based on configuration.
 
-    Reads from YAML config file and returns AnthropicAugmentedLLM if anthropic.api_key
-    is available, otherwise returns OpenAIAugmentedLLM.
+    Priority:
+    1. Check main_config for default_llm_provider
+    2. Check secrets for anthropic API key
+    3. Check secrets for ollama configuration
+    4. Default to OpenAI
 
     Args:
-        config_path: Path to the YAML configuration file
+        config_path: Path to the secrets YAML configuration file
+        main_config_path: Path to the main configuration file
 
     Returns:
         class: The preferred LLM class
     """
     try:
-        # Try to read the configuration file
+        # First check main config for default provider
+        if os.path.exists(main_config_path):
+            with open(main_config_path, "r", encoding="utf-8") as f:
+                main_config = yaml.safe_load(f)
+
+            default_provider = main_config.get("default_llm_provider", "").lower()
+            if default_provider == "ollama":
+                print("🤖 Using OllamaAugmentedLLM (default_llm_provider=ollama)")
+                return OllamaAugmentedLLM
+            elif default_provider == "anthropic":
+                print("🤖 Using AnthropicAugmentedLLM (default_llm_provider=anthropic)")
+                return AnthropicAugmentedLLM
+            elif default_provider == "openai":
+                print("🤖 Using OpenAIAugmentedLLM (default_llm_provider=openai)")
+                return OpenAIAugmentedLLM
+
+        # Fallback to checking API keys in secrets file
         if os.path.exists(config_path):
             with open(config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
 
-            # Check for anthropic API key in config
+            # Check for anthropic API key
             anthropic_config = config.get("anthropic", {})
             anthropic_key = anthropic_config.get("api_key", "")
 
-            if anthropic_key and anthropic_key.strip() and not anthropic_key == "":
-                # print("🤖 Using AnthropicAugmentedLLM (Anthropic API key found in config)")
+            if anthropic_key and anthropic_key.strip() and anthropic_key != "":
+                print("🤖 Using AnthropicAugmentedLLM (Anthropic API key found)")
                 return AnthropicAugmentedLLM
-            else:
-                # print("🤖 Using OpenAIAugmentedLLM (Anthropic API key not configured)")
-                return OpenAIAugmentedLLM
+
+            # Check for ollama configuration
+            ollama_config = config.get("ollama", {})
+            if ollama_config:
+                print("🤖 Using OllamaAugmentedLLM (Ollama config found)")
+                return OllamaAugmentedLLM
+
+            # Default to OpenAI
+            print("🤖 Using OpenAIAugmentedLLM (default)")
+            return OpenAIAugmentedLLM
         else:
             print(f"🤖 Config file {config_path} not found, using OpenAIAugmentedLLM")
             return OpenAIAugmentedLLM
 
     except Exception as e:
-        print(f"🤖 Error reading config file {config_path}: {e}")
+        print(f"🤖 Error reading config file: {e}")
         print("🤖 Falling back to OpenAIAugmentedLLM")
         return OpenAIAugmentedLLM
 

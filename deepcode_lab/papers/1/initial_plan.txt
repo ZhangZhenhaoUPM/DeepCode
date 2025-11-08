@@ -1,0 +1,172 @@
+```yaml
+complete_reproduction_plan:
+  paper_info:
+    title: "Paper2Code: Automating Code Generation from Scientific Papers in Machine Learning"
+    core_contribution: "Multi-stage pipeline for converting scientific papers into executable code with modular, dependency-aware implementation"
+
+  file_structure: |
+    deepcode_paper2code/
+    ├── README.md
+    ├── requirements.txt
+    ├── config/
+    │   ├── __init__.py
+    │   ├── model_config.py
+    │   └── pipeline_config.py
+    ├── tools/
+    │   ├── __init__.py
+    │   ├── code_implementation_server.py
+    │   ├── document_parser.py
+    │   ├── code_generator.py
+    │   └── agent_coordinator.py
+    ├── agents/
+    │   ├── __init__.py
+    │   ├── intent_understanding_agent.py
+    │   ├── algorithm_extraction_agent.py
+    │   ├── code_generation_agent.py
+    │   └── debugging_agent.py
+    ├── prompts/
+    │   ├── __init__.py
+    │   ├── intent_prompts.py
+    │   ├── algorithm_prompts.py
+    │   └── code_prompts.py
+    ├── data/
+    │   ├── __init__.py
+    │   ├── paper_processor.py
+    │   └── reference_mining.py
+    ├── outputs/
+    │   ├── __init__.py
+    │   └── code_output.py
+    ├── utils/
+    │   ├── __init__.py
+    │   ├── logging_utils.py
+    │   └── validation_utils.py
+    ├── main.py
+    └── eval.py
+
+  implementation_components: |
+    1. **Intent Understanding Agent**
+       - Purpose: Analyzes paper content to understand core task and objective
+       - Implementation: NLP-based intent classification using Transformers
+       - Inputs: research paper (PDF/HTML/Text)
+       - Outputs: problem context, task type, key requirements
+       - Algorithms: Transformer-based intent classification with attention mechanisms
+
+    2. **Algorithm Extraction Agent**
+       - Purpose: Identifies and extracts algorithms and implementation details
+       - Implementation: Neural parsing with dependency trees for code structure
+       - Inputs: paper text, identified intent
+       - Outputs: structured algorithmic specification, pseudocode blocks
+       - Algorithms: Dependency-aware parsing using spaCy + custom neural extraction
+
+    3. **Code Generation Agent**
+       - Purpose: Produces executable code based on algorithmic specification
+       - Implementation: Modular code generation with dependency mapping
+       - Inputs: algorithmic specification, reference libraries
+       - Outputs: executable code files with proper package structure
+       - Algorithms: Template-based generation with code embedding and retrieval
+
+    4. **Debugging Agent**
+       - Purpose: Refines and validates generated code quality
+       - Implementation: Multi-stage code verification with error detection
+       - Inputs: generated code, validation specifications
+       - Outputs: corrected/purified code with error messages
+       - Algorithms: Iterative debugging using unit test generation and comparison
+
+    5. **Document Parser Module**
+       - Purpose: Extracts clean text from various paper formats
+       - Implementation: PDF/html/text processor with formatting normalization
+       - Inputs: PDF files, web URLs, plain text
+       - Outputs: structured JSON for code implementation
+       - Algorithms: OCR + layout analysis with regex extraction
+
+    6. **Reference Mining Module**
+       - Purpose: Identifies relevant libraries and APIs used in paper
+       - Implementation: RAG (Retrieval-Augmented Generation) system
+       - Inputs: paper content, identified algorithms
+       - Outputs: dependency requirements, code libraries
+       - Algorithms: Semantic embedding search with code database retrieval
+
+    7. **Code Implementation Server**
+       - Purpose: Serves as central coordination hub for all agents
+       - Implementation: RESTful API server with MCP integration
+       - Inputs: paper content, task specifications
+       - Outputs: fully generated code repository
+       - Algorithms: Workflow coordination, task decompositon, state management
+
+    8. **Prompt Templates**
+       - Purpose: Standardized language for agent operations
+       - Implementation: Jinja2 templates for different prompt types
+       - Inputs: agent type, task context, paper details
+       - Outputs: prompt strings for LLM interactions
+       - Algorithms: Template substitution with variable injection
+
+    9. **Validation Utilities**
+       - Purpose: Ensures consistent quality of generated outputs
+       - Implementation: Code syntax validation, dependency checks, correctness metrics
+       - Inputs: generated code, evaluation specs
+       - Outputs: validation reports, quality metrics
+       - Algorithms: AST analysis, integration tests, performance benchmarks
+
+  code_generation_algorithm: |
+    1. **Initialize Pipeline**: Load paper content and set pipeline configuration
+    2. **Intent Understanding Phase**: 
+       - Parse document for overall purpose and task type
+       - Identify core scientific problem addressed
+    3. **Algorithm Extraction**:
+       - Isolate algorithmic descriptions and mathematical notations
+       - Extract parameters, variables, and flow control structures
+       - Map logical steps into procedural components
+    4. **Reference Mining**:
+       - Retrieve related code libraries from CodeRAG database
+       - Determine appropriate API calls and framework usage
+       - Identify dependency requirements from references
+    5. **Code Generation**:
+       - Generate modular components from algorithmic blocks
+       - Apply templates for consistent coding style and standards
+       - Map dependencies to code structure with appropriate imports
+    6. **Debugging/Refinement**:
+       - Execute static analysis on output
+       - Run basic unit tests
+       - Correct syntax/structural errors
+    7. **Quality Assurance**:
+       - Verify consistency with original paper
+       - Benchmark performance characteristics
+       - Validate against known working implementations
+
+  expected_output_structure: |
+    Transformer_paper2code/
+    ├── __init__.py
+    ├── model.py
+    ├── dataset.py
+    ├── train.py
+    ├── requirements.txt
+    ├── config.py
+    ├── README.md
+    ├── tests/
+    │   ├── __init__.py
+    │   └── test_model.py
+    └── examples/
+        ├── run_train.py
+        └── visualize.py
+
+  pipeline_stages: |
+    Stage 1: Analysis
+      - Input: scientific paper (PDF/Text/URL)
+      - Focus: interpreting implementation-specific details
+      - Outputs: algorithmic specifications, problem context
+    
+    Stage 2: Planning
+      - Input: algorithmic analysis
+      - Focus: hierarchical task decomposition
+      - Outputs: task breakdown, workflow plan, code modularization
+    
+    Stage 3: Generation
+      - Input: planning outputs
+      - Focus: generating modular, dependency-aware code
+      - Outputs: structured code implementation, package structure
+    
+    Stage 4: Debugging
+      - Input: generated code
+      - Focus: iterative refinement
+      - Outputs: corrected code, error reports
+```

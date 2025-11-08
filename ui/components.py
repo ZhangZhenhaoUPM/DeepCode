@@ -253,6 +253,53 @@ def sidebar_control_panel() -> Dict[str, Any]:
         # Workflow configuration options
         st.markdown("### ⚙️ Workflow Settings")
 
+        # Model selection
+        st.markdown("#### 🤖 LLM Model Selection")
+        model_provider = st.radio(
+            "Select Model Provider",
+            options=["Ollama Local (GPU)", "Gemini API (Cloud)"],
+            index=0,
+            help="Choose between local Ollama model or cloud-based Gemini API. Ollama recommended for better tool support.",
+            key="model_provider",
+        )
+
+        if model_provider == "Ollama Local (GPU)":
+            # Ollama model selection
+            ollama_model = st.selectbox(
+                "Select Ollama Model",
+                options=[
+                    "qwen3-coder:30b (19GB, Recommended for RTX 5090)",
+                    "qwen3-vl:4b (3.3GB, Vision Model)",
+                    "qwen2.5vl:7b (6GB, Vision Model)",
+                ],
+                index=0,
+                help="Qwen3-Coder 30B is optimized for code generation with 256K context window",
+                key="ollama_model_select",
+            )
+
+            # Parse selected model
+            if "qwen3-coder:30b" in ollama_model:
+                model_name = "qwen3-coder:30b"
+                st.success("🚀 Using Qwen3-Coder 30B (GPU) - 256K Context")
+                st.info("💡 3.3B activated / 30B total params - Perfect for your RTX 5090 32GB!")
+            elif "qwen3-vl:4b" in ollama_model:
+                model_name = "qwen3-vl:4b"
+                st.success("🖥️ Using Qwen3-VL 4B (GPU) - Vision Model")
+            else:
+                model_name = "qwen2.5vl:7b"
+                st.success("🖥️ Using Qwen2.5-VL 7B (GPU) - Vision Model")
+
+            st.session_state.llm_provider = "ollama"
+            st.session_state.llm_model = model_name
+        else:
+            # Gemini API
+            st.success("☁️ Using Google Gemini 2.5 Pro")
+            st.warning("⚠️ Note: Gemini's OpenAI compatibility has limited tool call support")
+            st.session_state.llm_provider = "openai"
+            st.session_state.llm_model = "gemini-2.5-pro"
+
+        st.markdown("---")
+
         # Indexing functionality toggle
         enable_indexing = st.checkbox(
             "🗂️ Enable Codebase Indexing",
@@ -382,13 +429,21 @@ def file_input_component(task_counter: int) -> Optional[str]:
             # Import PDF converter
             from tools.pdf_converter import PDFConverter
 
-            # Save original file
+            # Save original file to Deepcode working directory (not /tmp)
             file_ext = uploaded_file.name.split(".")[-1].lower()
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=f".{file_ext}"
-            ) as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                original_file_path = tmp_file.name
+
+            # Create temp directory in Deepcode workspace
+            deepcode_temp = os.path.join(os.getcwd(), "deepcode_lab", "temp")
+            os.makedirs(deepcode_temp, exist_ok=True)
+
+            # Generate unique filename
+            import time
+            unique_name = f"upload_{int(time.time())}_{uploaded_file.name}"
+            original_file_path = os.path.join(deepcode_temp, unique_name)
+
+            # Write file
+            with open(original_file_path, 'wb') as f:
+                f.write(uploaded_file.getvalue())
 
             st.success("✅ File uploaded successfully!")
 

@@ -53,10 +53,34 @@ class FileProcessor:
             else:
                 info_dict = file_info
 
-            # Extract paper path from dictionary
-            paper_path = info_dict.get("paper_path")
-            if not paper_path:
-                raise ValueError("No paper_path found in input dictionary")
+            # Extract paper path from dictionary (support both 'paper_path' and 'path')
+            paper_path = info_dict.get("paper_path") or info_dict.get("path")
+            print(f"\n🔍 DEBUG extract_file_path:")
+            print(f"  info_dict keys: {list(info_dict.keys())}")
+            print(f"  info_dict: {info_dict}")
+            print(f"  paper_path: {paper_path}")
+
+            # If paper_path is None or empty, try to find the moved file in deepcode_lab
+            if not paper_path or paper_path == "None":
+                print("  ⚠️ paper_path is None, searching for moved file...")
+                # Look in deepcode_lab/papers directory
+                deepcode_lab = os.path.join(os.getcwd(), "deepcode_lab", "papers")
+                if os.path.exists(deepcode_lab):
+                    # Find the most recently created directory
+                    dirs = [d for d in os.listdir(deepcode_lab) if os.path.isdir(os.path.join(deepcode_lab, d))]
+                    if dirs:
+                        # Sort by modification time, get the newest
+                        dirs.sort(key=lambda d: os.path.getmtime(os.path.join(deepcode_lab, d)), reverse=True)
+                        newest_dir = os.path.join(deepcode_lab, dirs[0])
+                        # Look for .md file in this directory
+                        for file in os.listdir(newest_dir):
+                            if file.endswith('.md'):
+                                paper_path = os.path.join(newest_dir, file)
+                                print(f"  ✅ Found moved file: {paper_path}")
+                                break
+
+            if not paper_path or paper_path == "None":
+                raise ValueError(f"No paper_path or path found in input dictionary. Keys found: {list(info_dict.keys())}, Dict: {info_dict}")
 
             # Get the directory path instead of the file path
             paper_dir = os.path.dirname(paper_path)
@@ -191,9 +215,30 @@ class FileProcessor:
             with open(file_path, "rb") as f:
                 header = f.read(8)
                 if header.startswith(b"%PDF"):
-                    raise IOError(
-                        f"File {file_path} is a PDF file, not a text file. Please convert it to markdown format or use PDF processing tools."
-                    )
+                    # Auto-convert PDF to markdown
+                    print(f"📄 Detected PDF file, converting to markdown: {file_path}")
+                    try:
+                        from tools.pdf_downloader import DoclingConverter
+
+                        converter = DoclingConverter()
+
+                        # Convert PDF to markdown in the same directory
+                        md_path = file_path.replace('.pdf', '.md')
+
+                        # Use DoclingConverter to convert
+                        result = converter.convert_to_markdown(file_path, md_path)
+
+                        print(f"✅ PDF converted to markdown: {md_path}")
+                        print(f"   Conversion result: {result}")
+
+                        # Update file_path to point to the markdown file
+                        file_path = md_path
+                    except Exception as e:
+                        import traceback
+                        traceback.print_exc()
+                        raise IOError(
+                            f"Failed to convert PDF {file_path} to markdown: {str(e)}"
+                        )
 
             # Read file content
             # Note: Using async with would be better for large files
@@ -313,8 +358,8 @@ class FileProcessor:
                 # 尝试解析为JSON（处理下载结果）
                 try:
                     parsed_json = json.loads(file_input)
-                    if isinstance(parsed_json, dict) and "paper_path" in parsed_json:
-                        file_path = parsed_json.get("paper_path")
+                    if isinstance(parsed_json, dict) and ("paper_path" in parsed_json or "path" in parsed_json):
+                        file_path = parsed_json.get("paper_path") or parsed_json.get("path")
                         # 如果文件不存在，尝试查找markdown文件
                         if file_path and not os.path.exists(file_path):
                             paper_dir = os.path.dirname(file_path)
@@ -325,12 +370,12 @@ class FileProcessor:
                                         f"No markdown file found in directory: {paper_dir}"
                                     )
                     else:
-                        raise ValueError("Invalid JSON format: missing paper_path")
+                        raise ValueError("Invalid JSON format: missing paper_path or path")
                 except json.JSONDecodeError:
                     # 尝试从文本中提取JSON（处理包含额外文本的下载结果）
                     extracted_json = cls.extract_json_from_text(file_input)
-                    if extracted_json and "paper_path" in extracted_json:
-                        file_path = extracted_json.get("paper_path")
+                    if extracted_json and ("paper_path" in extracted_json or "path" in extracted_json):
+                        file_path = extracted_json.get("paper_path") or extracted_json.get("path")
                         # 如果文件不存在，尝试查找markdown文件
                         if file_path and not os.path.exists(file_path):
                             paper_dir = os.path.dirname(file_path)
