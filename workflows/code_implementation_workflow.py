@@ -512,19 +512,18 @@ Requirements:
                 model_name = self.default_models.get("ollama", "qwen3-coder:30b")
 
                 # Test connection with a simple request
-                try:
-                    await client.chat.completions.create(
-                        model=model_name,
-                        max_tokens=20,
-                        messages=[{"role": "user", "content": "test"}],
-                    )
-                    self.logger.info(f"Using Ollama API with model: {model_name}")
-                    self.logger.info(f"Using Ollama base URL: {base_url}")
-                    return client, "openai"  # Ollama uses OpenAI-compatible API
-                except Exception as e:
-                    self.logger.warning(f"Ollama API unavailable: {e}")
+                await client.chat.completions.create(
+                    model=model_name,
+                    max_tokens=20,
+                    messages=[{"role": "user", "content": "test"}],
+                )
+                self.logger.info(f"Using Ollama API with model: {model_name}")
+                self.logger.info(f"Using Ollama base URL: {base_url}")
+                return client, "openai"  # Ollama uses OpenAI-compatible API
+            except Exception as e:
+                self.logger.warning(f"Ollama API unavailable: {e}")
 
-        # Try Anthropic API first if key is available
+        # Try Anthropic API if Ollama failed or key not available
         if anthropic_key and anthropic_key.strip():
             try:
                 from anthropic import AsyncAnthropic
