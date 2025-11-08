@@ -347,6 +347,14 @@ class FileProcessor:
                     paper_dir = os.path.join(base_dir, "papers", paper_name)
 
                 # Ensure the directory exists
+                # Check if path exists as a file (not directory) and handle it
+                if os.path.exists(paper_dir) and not os.path.isdir(paper_dir):
+                    # Path exists but is a file, not a directory - rename it
+                    import shutil
+                    backup_path = paper_dir + "_backup"
+                    print(f"⚠️ Path exists as file, not directory: {paper_dir}")
+                    print(f"   Moving file to: {backup_path}")
+                    shutil.move(paper_dir, backup_path)
                 os.makedirs(paper_dir, exist_ok=True)
 
             if not paper_dir:
