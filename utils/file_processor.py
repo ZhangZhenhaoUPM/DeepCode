@@ -332,6 +332,24 @@ class FileProcessor:
                     paper_path = file_path_match.group(1)
                     file_input = {"paper_path": paper_path}
 
+            # If input is dictionary with None/null paper_path, try to find the file
+            if isinstance(file_input, dict):
+                paper_path_val = file_input.get("paper_path") or file_input.get("path")
+                if not paper_path_val or paper_path_val == "None":
+                    # Try to find the most recent markdown file
+                    deepcode_lab = os.path.join(os.getcwd(), "deepcode_lab", "papers")
+                    if os.path.exists(deepcode_lab):
+                        dirs = [d for d in os.listdir(deepcode_lab) if os.path.isdir(os.path.join(deepcode_lab, d))]
+                        if dirs:
+                            dirs.sort(key=lambda d: os.path.getmtime(os.path.join(deepcode_lab, d)), reverse=True)
+                            newest_dir = os.path.join(deepcode_lab, dirs[0])
+                            for file in os.listdir(newest_dir):
+                                if file.endswith('.md'):
+                                    found_file = os.path.join(newest_dir, file)
+                                    print(f"  🔧 Correcting null paper_path with found file: {found_file}")
+                                    file_input["paper_path"] = found_file  # Update the dict
+                                    break
+
             # Extract paper directory path
             paper_dir = cls.extract_file_path(file_input)
 
