@@ -91,7 +91,9 @@ openai:
 ollama:
   base_max_tokens: 32768
   default_model: qwen3-coder:30b
+  vision_model: qwen3-vl:4b  # Vision model for image understanding
   max_tokens_policy: adaptive
   retry_max_tokens: 32768
 default_llm_provider: ollama
+vision_enabled: true  # Enable vision/image understanding with VLM
 planning_mode: traditional
