@@ -784,6 +784,249 @@ def handle_guided_mode_processing():
                 st.error(f"Requirements modification exception: {str(e)}")
 
 
+def extract_code_directory_from_result(result: Dict[str, Any]) -> str:
+    """
+    Extract generated code directory path from processing result
+
+    Args:
+        result: Processing result dictionary
+
+    Returns:
+        Code directory path or None
+    """
+    import re
+    from pathlib import Path
+
+    # Try to extract directory from repo_result
+    repo_result = result.get("repo_result", "")
+
+    # Look for "Code generated in:" pattern
+    if "Code generated in:" in repo_result:
+        match = re.search(r"Code generated in:\s*([^\n]+)", repo_result)
+        if match:
+            code_dir = match.group(1).strip()
+            if Path(code_dir).exists():
+                return code_dir
+
+    # Look for "generate_code" directory pattern
+    match = re.search(r"(deepcode_lab/papers/\d+/generate_code)", repo_result)
+    if match:
+        code_dir = match.group(1)
+        if Path(code_dir).exists():
+            return code_dir
+
+    # Look for any directory path containing "generate_code"
+    lines = repo_result.split("\n")
+    for line in lines:
+        if "generate_code" in line:
+            # Try to extract path
+            path_match = re.search(r"([^\s]+generate_code[^\s]*)", line)
+            if path_match:
+                code_dir = path_match.group(1).strip("'\"")
+                if Path(code_dir).exists():
+                    return code_dir
+
+    return None
+
+
+def handle_code_review(code_directory: str, review_method: str) -> Dict[str, Any]:
+    """
+    Handle code review process
+
+    Args:
+        code_directory: Directory containing generated code
+        review_method: Review method (Gemini API or Gemini CLI)
+
+    Returns:
+        Review result dictionary
+    """
+    from pathlib import Path
+
+    try:
+        st.info(f"🔍 Starting code review for: {code_directory}")
+
+        # Check if directory has Python files
+        code_dir = Path(code_directory)
+        py_files = list(code_dir.rglob("*.py"))
+
+        if not py_files:
+            return {
+                "status": "error",
+                "error": "No Python files found in generated code directory",
+            }
+
+        st.info(f"📝 Found {len(py_files)} Python files to review")
+
+        if "API" in review_method:
+            # Use Gemini API for review
+            return handle_gemini_api_review(code_directory)
+        else:
+            # Use Gemini CLI for review
+            return handle_gemini_cli_review(code_directory)
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": f"Code review error: {str(e)}",
+        }
+
+
+def handle_gemini_api_review(code_directory: str) -> Dict[str, Any]:
+    """
+    Handle code review using Gemini API
+
+    Args:
+        code_directory: Directory containing generated code
+
+    Returns:
+        Review result dictionary
+    """
+    try:
+        from workflows.code_review_workflow_gemini import CodeReviewWorkflowGemini
+        from pathlib import Path
+
+        with st.spinner("🤖 Reviewing code with Gemini 2.5 Pro API..."):
+            # Use async review workflow
+            workflow = CodeReviewWorkflowGemini()
+
+            # Run review asynchronously
+            results = run_async_task_simple(
+                workflow.review_directory(code_directory)
+            )
+
+            if results["status"] == "success":
+                # Save report
+                output_path = Path(code_directory).parent / "code_review_report.md"
+                run_async_task_simple(
+                    workflow.generate_review_report(results, str(output_path))
+                )
+
+                summary = results["summary"]
+
+                # Display review summary
+                st.success(f"✅ Code review completed!")
+                st.markdown(f"**Average Score:** {summary['average_score']}/10")
+                st.markdown(f"**Total Issues:** {summary['total_issues']}")
+
+                if summary['critical_issues'] > 0:
+                    st.error(f"🔴 Critical Issues: {summary['critical_issues']}")
+                if summary['high_issues'] > 0:
+                    st.warning(f"🟠 High Priority Issues: {summary['high_issues']}")
+                if summary['medium_issues'] > 0:
+                    st.info(f"🟡 Medium Priority Issues: {summary['medium_issues']}")
+                if summary['low_issues'] > 0:
+                    st.info(f"🟢 Low Priority Issues: {summary['low_issues']}")
+
+                return {
+                    "status": "success",
+                    "report_path": str(output_path),
+                    "summary": summary,
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": results.get("error", "Review failed"),
+                }
+
+    except ValueError as e:
+        # API key not configured
+        st.error(f"❌ Gemini API Configuration Error: {e}")
+        st.info("💡 Please configure Gemini API key in mcp_agent.secrets.yaml")
+        return {
+            "status": "error",
+            "error": f"API configuration error: {str(e)}",
+        }
+    except Exception as e:
+        st.error(f"❌ Review error: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
+def handle_gemini_cli_review(code_directory: str) -> Dict[str, Any]:
+    """
+    Handle code review using Gemini CLI
+
+    Args:
+        code_directory: Directory containing generated code
+
+    Returns:
+        Review result dictionary
+    """
+    import subprocess
+    import shutil
+    from pathlib import Path
+    from datetime import datetime
+
+    try:
+        # Check if Gemini CLI is installed
+        if not shutil.which("gemini"):
+            st.warning("⚠️ Gemini CLI not installed. Falling back to Gemini API...")
+            return handle_gemini_api_review(code_directory)
+
+        st.info("🚀 Using Gemini CLI for code review...")
+
+        directory = Path(code_directory)
+        review_dir = directory.parent / "code_reviews"
+        review_dir.mkdir(parents=True, exist_ok=True)
+
+        output_file = review_dir / "gemini_cli_review.md"
+
+        # Create review prompt
+        prompt = f"""Review all Python files in the current directory for:
+1. Code quality and maintainability
+2. Security vulnerabilities
+3. Performance issues
+4. Best practices compliance
+5. Bug detection
+
+For each file, provide:
+- Overall score (0-10)
+- Specific issues with severity (CRITICAL/HIGH/MEDIUM/LOW)
+- Line numbers where applicable
+- Concrete recommendations
+
+Format the output as a detailed Markdown report."""
+
+        with st.spinner("🔄 Running Gemini CLI review (this may take a few minutes)..."):
+            # Run gemini CLI with the prompt
+            result = subprocess.run(
+                ["gemini", "-p", prompt, "--include-directories", str(directory)],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minutes timeout
+            )
+
+            if result.returncode == 0:
+                # Save output
+                with open(output_file, "w", encoding="utf-8") as f:
+                    f.write(f"# Gemini CLI Code Review\n\n")
+                    f.write(f"**Generated**: {datetime.now().isoformat()}\n")
+                    f.write(f"**Directory**: {code_directory}\n")
+                    f.write(f"**Model**: Gemini 2.5 Pro (via CLI)\n\n")
+                    f.write("---\n\n")
+                    f.write(result.stdout)
+
+                st.success(f"✅ Gemini CLI review completed!")
+
+                return {
+                    "status": "success",
+                    "report_path": str(output_file),
+                }
+            else:
+                st.warning(f"⚠️ Gemini CLI failed: {result.stderr}")
+                st.info("💡 Falling back to Gemini API...")
+                return handle_gemini_api_review(code_directory)
+
+    except subprocess.TimeoutExpired:
+        st.warning("⚠️ Gemini CLI timeout. Falling back to Gemini API...")
+        return handle_gemini_api_review(code_directory)
+    except Exception as e:
+        st.warning(f"⚠️ Gemini CLI error: {e}. Falling back to Gemini API...")
+        return handle_gemini_api_review(code_directory)
+
+
 def handle_start_processing_button(input_source: str, input_type: str):
     """
     Handle start processing button click
@@ -799,6 +1042,10 @@ def handle_start_processing_button(input_source: str, input_type: str):
     # Get indexing toggle status
     enable_indexing = st.session_state.get("enable_indexing", True)
 
+    # Get code review settings
+    enable_review = st.session_state.get("enable_review", False)
+    review_method = st.session_state.get("review_method", None)
+
     try:
         # Process workflow
         result = handle_processing_workflow(input_source, input_type, enable_indexing)
@@ -806,6 +1053,27 @@ def handle_start_processing_button(input_source: str, input_type: str):
         # Display result status
         if result["status"] == "success":
             display_status("All operations completed successfully! 🎉", "success")
+
+            # Run code review if enabled
+            if enable_review:
+                st.markdown("---")
+                st.markdown("### 🔍 Code Review Phase")
+
+                # Extract generated code directory from result
+                code_directory = extract_code_directory_from_result(result)
+
+                if code_directory:
+                    review_result = handle_code_review(code_directory, review_method)
+
+                    # Add review result to main result
+                    result["review_result"] = review_result
+
+                    if review_result["status"] == "success":
+                        display_status(f"Code review completed! Report: {review_result['report_path']}", "success")
+                    else:
+                        display_status(f"Code review failed: {review_result.get('error', 'Unknown error')}", "warning")
+                else:
+                    display_status("Could not locate generated code directory for review", "warning")
         else:
             display_status("Error during processing", "error")
 

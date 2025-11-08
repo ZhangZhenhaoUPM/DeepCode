@@ -313,6 +313,78 @@ def sidebar_control_panel() -> Dict[str, Any]:
         else:
             st.info("⚡ Fast mode - indexing disabled")
 
+        st.markdown("---")
+
+        # Code Review functionality toggle
+        st.markdown("#### 🔍 Code Review Settings")
+        enable_review = st.checkbox(
+            "🔍 Enable Code Review",
+            value=False,
+            help="Automatically review generated code using Gemini 2.5 Pro. Creates detailed review report with security, quality, and performance analysis.",
+            key="enable_review",
+        )
+
+        if enable_review:
+            st.success("✅ Code review enabled")
+
+            # Review method selection
+            review_method = st.radio(
+                "Select Review Method",
+                options=[
+                    "Gemini API (Recommended - Free & Fast)",
+                    "Gemini CLI (Requires Installation)",
+                ],
+                index=0,
+                help="Choose review method. Gemini API is recommended for automatic, fast reviews.",
+                key="review_method",
+            )
+
+            if "API" in review_method:
+                st.info("📝 Using Gemini 2.5 Pro API")
+                st.caption("Configure API key in mcp_agent.secrets.yaml")
+
+                # Show configuration hint if needed
+                with st.expander("⚙️ API Configuration", expanded=False):
+                    st.markdown("""
+                    **To configure Gemini API:**
+
+                    1. Get API key from: https://aistudio.google.com/apikey
+                    2. Edit `mcp_agent.secrets.yaml`:
+                    ```yaml
+                    openai:
+                      api_key: "YOUR_GEMINI_API_KEY"
+                      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+                    ```
+
+                    **Free Tier:**
+                    - 15 requests/minute
+                    - 1500 requests/day
+                    """)
+            else:
+                st.info("🔧 Using Gemini CLI")
+                st.caption("Install: npm install -g @google/gemini-cli")
+
+                # Check if CLI is installed
+                with st.expander("⚙️ CLI Installation", expanded=False):
+                    st.markdown("""
+                    **To install Gemini CLI:**
+
+                    ```bash
+                    # Using npm
+                    npm install -g @google/gemini-cli
+
+                    # Or using Homebrew (macOS)
+                    brew install gemini-cli
+                    ```
+
+                    **Verify Installation:**
+                    ```bash
+                    gemini --version
+                    ```
+                    """)
+        else:
+            st.info("⏸️ Code review disabled")
+
         # System information
         st.markdown("### 📊 System Info")
         st.info(f"**Python:** {sys.version.split()[0]}")
@@ -335,6 +407,8 @@ def sidebar_control_panel() -> Dict[str, Any]:
             "history_count": history_info["count"],
             "has_history": history_info["has_history"],
             "enable_indexing": enable_indexing,  # Add indexing toggle state
+            "enable_review": enable_review,  # Add code review toggle state
+            "review_method": review_method if enable_review else None,  # Review method selection
         }
 
 
