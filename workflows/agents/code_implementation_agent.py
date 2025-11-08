@@ -228,6 +228,23 @@ class CodeImplementationAgent:
                     # Execute tool call through MCP protocol
                     result = await self.mcp_agent.call_tool(tool_name, tool_input)
 
+                    # Check for empty file generation (防止空文件)
+                    if tool_name == "write_file":
+                        try:
+                            result_obj = json.loads(result)
+                            if result_obj.get("size_bytes", 0) == 0:
+                                self.logger.error(f"❌ Empty file detected: {tool_input.get('file_path')}")
+                                self.logger.error("   This is likely due to model output truncation")
+                                self.logger.warning("   ⚠️ Marking this as failed - consider switching model")
+                                # Override result to indicate failure
+                                result = json.dumps({
+                                    "status": "error",
+                                    "message": "Empty content detected - refusing to create empty file. Please retry with more context or switch to a different model.",
+                                    "file_path": tool_input.get('file_path')
+                                }, ensure_ascii=False)
+                        except json.JSONDecodeError:
+                            pass  # If result is not JSON, continue normally
+
                     # Track file implementation progress
                     if tool_name == "write_file":
                         await self._track_file_implementation_with_summary(

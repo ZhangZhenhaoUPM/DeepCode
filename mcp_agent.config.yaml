@@ -6,7 +6,7 @@ document_segmentation:
   size_threshold_chars: 3000
 execution_engine: asyncio
 logger:
-  level: info
+  level: debug  # Changed from 'info' to 'debug' for detailed troubleshooting
   path_settings:
     path_pattern: logs/mcp-agent-{unique_id}.jsonl
     timestamp_format: '%Y%m%d_%H%M%S'
@@ -30,7 +30,7 @@ mcp:
       - '@modelcontextprotocol/server-brave-search'
       command: npx
       env:
-        BRAVE_API_KEY: ''
+        BRAVE_API_KEY: 'BSA5zcmimzOanUyFjc2xlckqHYkBgTp'
     code-implementation:
       args:
       - tools/code_implementation_server.py
@@ -89,11 +89,39 @@ openai:
   max_tokens_policy: adaptive
   retry_max_tokens: 32768
 ollama:
-  base_max_tokens: 32768
-  default_model: qwen3-coder:30b
+  base_max_tokens: 80000  # Increased from 32768 to support qwen3-coder's full capacity
+  default_model: qwen3:32b  # General model for analysis and planning
+  code_model: qwen3-coder:30b  # Specialized model for code generation
   vision_model: qwen3-vl:4b  # Vision model for image understanding
   max_tokens_policy: adaptive
-  retry_max_tokens: 32768
+  retry_max_tokens: 100000  # Increased from 32768 to allow larger outputs on retry
+  # Model-specific generation parameters (following Qwen3 official best practices)
+  generation_params:
+    qwen3:32b:  # For thinking/reasoning mode (analysis tasks)
+      temperature: 0.6  # Qwen3 doc: use 0.6 for thinking mode, avoid greedy decoding
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      repeat_penalty: 1.05
+    qwen3-coder:30b:  # For code generation (official recommendations)
+      temperature: 0.7  # Official Qwen3-Coder recommendation
+      top_p: 0.8       # Official recommendation
+      top_k: 20        # Official recommendation
+      min_p: 0.0
+      repeat_penalty: 1.05  # Official recommendation
+    qwen3-vl:4b:  # For vision tasks
+      temperature: 0.3
+      top_p: 0.9
+      top_k: 20
+      min_p: 0.0
+      repeat_penalty: 1.05
 default_llm_provider: ollama
 vision_enabled: true  # Enable vision/image understanding with VLM
 planning_mode: traditional
+# Multi-model strategy: use appropriate model for each task type
+task_model_routing:
+  enabled: true
+  strategies:
+    analysis: qwen3:32b  # Text analysis, planning, understanding (general purpose)
+    code_generation: qwen3-coder:30b  # Code writing, implementation (code specialized)
+    vision: qwen3-vl:4b  # Image understanding, diagram analysis

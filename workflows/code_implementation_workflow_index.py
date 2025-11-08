@@ -60,6 +60,9 @@ class CodeImplementationWorkflowWithIndex:
         self.enable_read_tools = (
             True  # Default value, will be overridden by run_workflow parameter
         )
+        self.active_model = None  # Track which model is actually being used
+        self.active_provider = None  # Track which provider is being used (ollama, openai, anthropic)
+        self.task_model_routing = self._load_task_model_routing()  # Multi-model strategy
 
     def _load_api_config(self) -> Dict[str, Any]:
         """Load API configuration from YAML file"""
@@ -69,12 +72,97 @@ class CodeImplementationWorkflowWithIndex:
         except Exception as e:
             raise Exception(f"Failed to load API config: {e}")
 
+    def _load_task_model_routing(self) -> Dict[str, Any]:
+        """Load task-based model routing configuration"""
+        try:
+            with open("mcp_agent.config.yaml", "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                routing = config.get("task_model_routing", {})
+
+                # Load generation parameters for different models
+                ollama_config = config.get("ollama", {})
+                self.generation_params = ollama_config.get("generation_params", {})
+
+                if routing.get("enabled", False):
+                    self.logger.info("✅ Multi-model routing enabled")
+                    self.logger.info(f"   Analysis model: {routing.get('strategies', {}).get('analysis')}")
+                    self.logger.info(f"   Code generation model: {routing.get('strategies', {}).get('code_generation')}")
+                    self.logger.info(f"   Vision model: {routing.get('strategies', {}).get('vision')}")
+
+                    # Log generation parameters if available
+                    if self.generation_params:
+                        self.logger.info("✅ Model-specific generation parameters loaded")
+                        for model, params in self.generation_params.items():
+                            self.logger.info(f"   {model}: temp={params.get('temperature', 0.2)}, top_p={params.get('top_p', 0.95)}")
+
+                return routing
+        except Exception as e:
+            self.logger.warning(f"Failed to load task model routing: {e}")
+            self.generation_params = {}
+            return {"enabled": False}
+
     def _create_logger(self) -> logging.Logger:
         """Create and configure logger"""
         logger = logging.getLogger(__name__)
         # Don't add handlers to child loggers - let them propagate to root
         logger.setLevel(logging.INFO)
         return logger
+
+    def _select_model_for_task(self, task_type: str = "general") -> str:
+        """
+        Select appropriate model based on task type
+
+        Args:
+            task_type: Type of task - "analysis", "code_generation", "vision", or "general"
+
+        Returns:
+            Model name to use for this task
+        """
+        if not self.task_model_routing.get("enabled", False):
+            # Multi-model routing disabled, use active model or default
+            fallback = self.active_model or self.default_models.get("ollama", "qwen3-coder:30b")
+            self.logger.warning(f"⚠️ ROUTING DISABLED - using fallback: {fallback}")
+            return fallback
+
+        strategies = self.task_model_routing.get("strategies", {})
+
+        # Map task type to model
+        if task_type == "code_generation":
+            model = strategies.get("code_generation", "qwen3-coder:30b")
+            self.logger.warning(f"🔧 CODE GENERATION TASK → Selected model: {model}")
+        elif task_type == "analysis":
+            model = strategies.get("analysis", "qwen3:32b")
+            self.logger.warning(f"📊 ANALYSIS TASK → Selected model: {model}")
+        elif task_type == "vision":
+            model = strategies.get("vision", "qwen3-vl:4b")
+            self.logger.warning(f"👁️ VISION TASK → Selected model: {model}")
+        else:
+            # Default to analysis model for general tasks
+            model = strategies.get("analysis", self.default_models.get("ollama", "qwen3:32b"))
+            self.logger.warning(f"ℹ️ GENERAL TASK → Selected model: {model}")
+
+        return model
+
+    def _get_generation_params(self, model_name: str) -> Dict[str, Any]:
+        """
+        Get generation parameters for specific model
+
+        Args:
+            model_name: Name of the model (e.g., "qwen3:32b", "qwen3-coder:30b")
+
+        Returns:
+            Dictionary of generation parameters (temperature, top_p, etc.)
+        """
+        if not hasattr(self, 'generation_params'):
+            return {}
+
+        # Get model-specific params, or return empty dict if not found
+        params = self.generation_params.get(model_name, {})
+
+        if params:
+            self.logger.debug(f"📋 Using generation params for {model_name}: {params}")
+
+        return params
 
     def _read_plan_file(self, plan_file_path: str) -> str:
         """Read implementation plan file"""
@@ -216,10 +304,12 @@ Requirements:
 
         self.logger.info(f"🎯 Using code directory (MCP workspace): {code_directory}")
 
+        # Create code directory if it doesn't exist
         if not os.path.exists(code_directory):
-            raise FileNotFoundError(
-                "File tree structure not found, please run file tree creation first"
-            )
+            self.logger.info(f"📁 Creating code directory: {code_directory}")
+            os.makedirs(code_directory, exist_ok=True)
+        else:
+            self.logger.info(f"✅ Code directory already exists: {code_directory}")
 
         try:
             client, client_type = await self._initialize_llm_client()
@@ -339,9 +429,12 @@ Requirements:
 
             # Round logging removed
 
-            # Call LLM
+            # Determine task type based on recent context
+            task_type = self._infer_task_type(messages, code_agent)
+
+            # Call LLM with appropriate model for the task
             response = await self._call_llm_with_tools(
-                client, client_type, current_system_message, messages, tools
+                client, client_type, current_system_message, messages, tools, task_type=task_type
             )
 
             response_content = response.get("content", "").strip()
@@ -491,31 +584,63 @@ Requirements:
                 self.mcp_agent = None
 
     async def _initialize_llm_client(self):
-        """Initialize LLM client (Anthropic or OpenAI) based on API key availability"""
+        """Initialize LLM client (Ollama, Anthropic or OpenAI) based on API key availability"""
         # Check which API has available key and try that first
+        ollama_key = self.api_config.get("ollama", {}).get("api_key", "")
         anthropic_key = self.api_config.get("anthropic", {}).get("api_key", "")
         openai_key = self.api_config.get("openai", {}).get("api_key", "")
 
-        # Try Anthropic API first if key is available
+        # Try Ollama first if key is available (local GPU preferred)
+        if ollama_key and ollama_key.strip():
+            try:
+                from openai import AsyncOpenAI
+
+                ollama_config = self.api_config.get("ollama", {})
+                base_url = ollama_config.get("base_url", "http://localhost:11434/v1")
+
+                client = AsyncOpenAI(api_key=ollama_key, base_url=base_url)
+
+                # Get model name from config
+                model_name = self.default_models.get("ollama", "qwen3-coder:30b")
+
+                # Test connection with Ollama model
+                await client.chat.completions.create(
+                    model=model_name,
+                    max_tokens=20,
+                    messages=[{"role": "user", "content": "test"}],
+                )
+
+                self.logger.info(f"Using Ollama API with model: {model_name}")
+                self.logger.info(f"Ollama base URL: {base_url}")
+                self.active_model = model_name  # Save the model being used
+                self.active_provider = "ollama"  # Track provider
+                return client, "openai"  # Use OpenAI client type for Ollama (compatible API)
+            except Exception as e:
+                self.logger.warning(f"Ollama API unavailable: {e}")
+
+        # Try Anthropic API if Ollama failed or key not available
         if anthropic_key and anthropic_key.strip():
             try:
                 from anthropic import AsyncAnthropic
 
                 client = AsyncAnthropic(api_key=anthropic_key)
+                model_name = self.default_models["anthropic"]
                 # Test connection with default model from config
                 await client.messages.create(
-                    model=self.default_models["anthropic"],
+                    model=model_name,
                     max_tokens=20,
                     messages=[{"role": "user", "content": "test"}],
                 )
                 self.logger.info(
-                    f"Using Anthropic API with model: {self.default_models['anthropic']}"
+                    f"Using Anthropic API with model: {model_name}"
                 )
+                self.active_model = model_name  # Save the model being used
+                self.active_provider = "anthropic"  # Track provider
                 return client, "anthropic"
             except Exception as e:
                 self.logger.warning(f"Anthropic API unavailable: {e}")
 
-        # Try OpenAI API if Anthropic failed or key not available
+        # Try OpenAI API if both Ollama and Anthropic failed or keys not available
         if openai_key and openai_key.strip():
             try:
                 from openai import AsyncOpenAI
@@ -529,11 +654,12 @@ Requirements:
                 else:
                     client = AsyncOpenAI(api_key=openai_key)
 
+                model_name = self.default_models["openai"]
                 # Test connection with default model from config
                 # Try max_tokens first, fallback to max_completion_tokens if unsupported
                 try:
                     await client.chat.completions.create(
-                        model=self.default_models["openai"],
+                        model=model_name,
                         max_tokens=20,
                         messages=[{"role": "user", "content": "test"}],
                     )
@@ -541,17 +667,19 @@ Requirements:
                     if "max_tokens" in str(e) and "max_completion_tokens" in str(e):
                         # Retry with max_completion_tokens for models that require it
                         await client.chat.completions.create(
-                            model=self.default_models["openai"],
+                            model=model_name,
                             max_completion_tokens=20,
                             messages=[{"role": "user", "content": "test"}],
                         )
                     else:
                         raise
                 self.logger.info(
-                    f"Using OpenAI API with model: {self.default_models['openai']}"
+                    f"Using OpenAI API with model: {model_name}"
                 )
                 if base_url:
                     self.logger.info(f"Using custom base URL: {base_url}")
+                self.active_model = model_name  # Save the model being used
+                self.active_provider = "openai"  # Track provider
                 return client, "openai"
             except Exception as e:
                 self.logger.warning(f"OpenAI API unavailable: {e}")
@@ -561,9 +689,45 @@ Requirements:
         )
 
     async def _call_llm_with_tools(
-        self, client, client_type, system_message, messages, tools, max_tokens=8192
+        self, client, client_type, system_message, messages, tools, max_tokens=8192, task_type="general"
     ):
-        """Call LLM with tools"""
+        """
+        Call LLM with tools, using appropriate model based on task type
+
+        Args:
+            task_type: "analysis", "code_generation", "vision", or "general"
+        """
+        # Select model based on task type if multi-model routing is enabled
+        routing_enabled = self.task_model_routing.get("enabled", False)
+        is_ollama = self.active_provider == "ollama"
+
+        self.logger.warning(f"\n{'='*80}")
+        self.logger.warning(f"🔍 TASK ROUTING CHECK:")
+        self.logger.warning(f"   - Routing enabled: {routing_enabled}")
+        self.logger.warning(f"   - Provider: {self.active_provider}")
+        self.logger.warning(f"   - Task type: {task_type}")
+        self.logger.warning(f"   - Current active_model: {self.active_model}")
+
+        if routing_enabled and is_ollama:
+            model_for_task = self._select_model_for_task(task_type)
+            # Temporarily override active_model for this call
+            original_model = self.active_model
+            self.active_model = model_for_task
+
+            self.logger.warning(f"   ✅ SWITCHING MODEL: {original_model} → {model_for_task}")
+
+            # Enhance system message based on task type
+            system_message = self._enhance_system_message_for_task(system_message, task_type)
+            self.logger.warning(f"   ✅ System message enhanced for {task_type}")
+        else:
+            if not routing_enabled:
+                self.logger.warning(f"   ❌ Task routing DISABLED in config")
+            if not is_ollama:
+                self.logger.warning(f"   ❌ Provider is {self.active_provider}, not ollama - task routing skipped")
+            original_model = None
+
+        self.logger.warning(f"{'='*80}\n")
+
         try:
             if client_type == "anthropic":
                 return await self._call_anthropic_with_tools(
@@ -578,6 +742,77 @@ Requirements:
         except Exception as e:
             self.logger.error(f"LLM call failed: {e}")
             raise
+        finally:
+            # Restore original model
+            if original_model is not None:
+                self.active_model = original_model
+
+    def _enhance_system_message_for_task(self, system_message: str, task_type: str) -> str:
+        """
+        Enhance system message with task-specific instructions
+
+        Args:
+            system_message: Original system message
+            task_type: Type of task ("analysis", "code_generation", etc.)
+
+        Returns:
+            Enhanced system message with task-specific guidance
+        """
+        if task_type == "code_generation":
+            # For qwen3-coder: Focus ONLY on writing code, no analysis
+            enhancement = """
+
+🔧 **CODE GENERATION MODE ACTIVATED** (qwen3-coder:30b)
+
+**YOUR EXCLUSIVE ROLE**: Write production-quality code implementations.
+
+**CRITICAL INSTRUCTIONS**:
+1. ✅ **DO**: Use `write_file` tool to create complete, functional code files
+2. ✅ **DO**: Write well-structured, documented code with proper error handling
+3. ✅ **DO**: Follow the implementation plan and architecture specifications
+4. ❌ **DO NOT**: Call `read_file`, `read_code_mem`, or `get_file_structure` - analysis is already done
+5. ❌ **DO NOT**: Spend time analyzing or understanding - just implement based on the plan
+6. ❌ **DO NOT**: Write long explanations - let your code speak for itself
+
+**WORKFLOW**:
+- Read the guidance provided in previous messages
+- Identify which file needs to be implemented next
+- Use `write_file` to create the complete implementation
+- Move to the next file
+
+**REMEMBER**: You are a code generator, not an analyzer. Write code immediately based on the specifications provided."""
+
+        elif task_type == "analysis":
+            # For qwen3:32b: Focus on understanding and planning
+            # Enable Qwen3's thinking/reasoning mode with /think instruction
+            enhancement = """
+
+/think
+
+📊 **ANALYSIS MODE ACTIVATED** (qwen3:32b - Thinking Mode Enabled)
+
+**YOUR EXCLUSIVE ROLE**: Understand code structure and plan the next implementation step.
+
+**CRITICAL INSTRUCTIONS**:
+1. ✅ **DO**: Use `read_file`, `read_code_mem`, `get_file_structure` to understand the codebase
+2. ✅ **DO**: Analyze dependencies, architecture, and identify what needs to be implemented next
+3. ✅ **DO**: Provide clear, concise guidance for the code generation phase
+4. ❌ **DO NOT**: Use `write_file` - you are here to analyze, not to write code
+5. ❌ **DO NOT**: Repeat the same analysis tools - gather information efficiently
+
+**WORKFLOW**:
+- Use analysis tools ONCE to gather necessary information
+- Understand what file needs to be implemented next
+- Provide clear specifications for implementation
+- The code generation model will handle the actual coding
+
+**REMEMBER**: You are an analyzer and planner, not a code writer. Gather information efficiently, then pass control to the code generator."""
+
+        else:
+            # No enhancement for other task types
+            return system_message
+
+        return system_message + enhancement
 
     async def _call_anthropic_with_tools(
         self, client, system_message, messages, tools, max_tokens
@@ -591,7 +826,7 @@ Requirements:
 
         try:
             response = await client.messages.create(
-                model=self.default_models["anthropic"],
+                model=self.active_model or self.default_models.get("anthropic", "claude-sonnet-4-20250514"),
                 system=system_message,
                 messages=validated_messages,
                 tools=tools,
@@ -665,11 +900,11 @@ Requirements:
                 # For write_file, try to extract at least file_path
                 file_path_match = re.search(r'"file_path"\s*:\s*"([^"]*)"', fixed)
                 if file_path_match:
-                    print("   ⚠️  write_file JSON truncated, using minimal structure")
-                    return {
-                        "file_path": file_path_match.group(1),
-                        "content": "",  # Empty content is better than crashing
-                    }
+                    print("   ⚠️  write_file JSON truncated - REFUSING to create empty file")
+                    print(f"   ❌ File would be: {file_path_match.group(1)}")
+                    print("   🔄 Returning None to force retry or model switch")
+                    # Return None instead of empty content to force retry
+                    return None
 
             # Step 5: Last resort - return error indicator
             print("   ❌ JSON repair failed completely")
@@ -728,24 +963,51 @@ Requirements:
 
         for attempt in range(max_retries):
             try:
+                # Get model name and generation parameters
+                model_name = self.active_model or self.default_models.get("openai", "gpt-4")
+                gen_params = self._get_generation_params(model_name)
+
+                self.logger.warning(f"🤖 API CALL DETAILS:")
+                self.logger.warning(f"   - Model: {model_name}")
+                self.logger.warning(f"   - Provider: {self.active_provider}")
+                self.logger.warning(f"   - Max tokens: {max_tokens}")
+
+                # Build API call parameters
+                api_params = {
+                    "model": model_name,
+                    "messages": openai_messages,
+                    "tools": openai_tools if openai_tools else None,
+                    "max_tokens": max_tokens,
+                }
+
+                # Add generation parameters if available (for Ollama models)
+                if gen_params and self.active_provider == "ollama":
+                    api_params.update({
+                        "temperature": gen_params.get("temperature", 0.2),
+                        "top_p": gen_params.get("top_p", 0.95),
+                        # Note: Ollama OpenAI API supports frequency_penalty as repeat_penalty
+                        "frequency_penalty": gen_params.get("repeat_penalty", 1.0) - 1.0,
+                    })
+                    self.logger.warning(f"   - Temperature: {gen_params.get('temperature', 0.2)}")
+                    self.logger.warning(f"   - Top_p: {gen_params.get('top_p', 0.95)}")
+                    self.logger.warning(f"   - Top_k: {gen_params.get('top_k', 'N/A')}")
+                    self.logger.warning(f"   - Repeat penalty: {gen_params.get('repeat_penalty', 1.0)}")
+                else:
+                    # Default parameters for non-Ollama providers
+                    api_params["temperature"] = 0.2
+                    self.logger.warning(f"   - Temperature: 0.2 (default)")
+
+                self.logger.warning(f"   📨 Sending request to API...")
+
                 # Try max_tokens first, fallback to max_completion_tokens if unsupported
                 try:
-                    response = await client.chat.completions.create(
-                        model=self.default_models["openai"],
-                        messages=openai_messages,
-                        tools=openai_tools if openai_tools else None,
-                        max_tokens=max_tokens,
-                        temperature=0.2,
-                    )
+                    response = await client.chat.completions.create(**api_params)
                 except Exception as e:
                     if "max_tokens" in str(e) and "max_completion_tokens" in str(e):
                         # Retry with max_completion_tokens for models that require it
-                        response = await client.chat.completions.create(
-                            model=self.default_models["openai"],
-                            messages=openai_messages,
-                            tools=openai_tools if openai_tools else None,
-                            max_completion_tokens=max_tokens,
-                        )
+                        api_params.pop("max_tokens")
+                        api_params["max_completion_tokens"] = max_tokens
+                        response = await client.chat.completions.create(**api_params)
                     else:
                         raise
 
@@ -862,6 +1124,90 @@ Requirements:
         return {"content": content, "tool_calls": tool_calls}
 
     # ==================== 5. Tools and Utility Methods (Utility Layer) ====================
+
+    def _infer_task_type(self, messages: List[Dict], code_agent) -> str:
+        """
+        Infer what type of task the LLM is about to perform based on context
+
+        Enhanced version: More aggressive code_generation detection to avoid analysis loops
+
+        Returns: "code_generation", "analysis", or "vision"
+        """
+        if not self.task_model_routing.get("enabled", False):
+            return "general"
+
+        # Check last few messages for context clues
+        recent_messages = messages[-5:] if len(messages) >= 5 else messages
+        recent_text = " ".join([msg.get("content", "")[:500] for msg in recent_messages]).lower()
+
+        # Enhanced heuristics for task type detection
+        code_keywords = ["write_file", "implement", "create file", "generate code", "coding", "write code",
+                        "def ", "class ", "function", "implementation"]
+        analysis_keywords = ["read_file", "read_code_mem", "get_file_structure", "search_code"]
+
+        # Strong indicators that we should switch to code generation
+        switch_to_code_triggers = [
+            "implement",
+            "write code",
+            "create the file",
+            "generate the implementation",
+            "tool: read_file",
+            "tool: read_code_mem",
+            "tool: get_file_structure"
+        ]
+
+        # Check for code generation triggers (higher priority)
+        should_generate_code = any(trigger in recent_text for trigger in switch_to_code_triggers)
+
+        # Check the last tool result - if it was a read operation, MUST generate code next
+        if messages and len(messages) >= 1:
+            last_message = messages[-1]
+            last_content = last_message.get("content", "").lower()
+
+            if "tool:" in last_content or "tool execution results" in last_content:
+                # Last message was a tool result
+                if any(tool in last_content for tool in ["read_file", "read_code_mem", "get_file_structure", "search_code"]):
+                    # Just finished reading/analysis - MUST generate code now
+                    self.logger.warning("🔧 Detected read operation → Switching to CODE GENERATION mode")
+                    return "code_generation"
+                elif "write_file" in last_content and "success" in last_content:
+                    # Just finished writing code successfully, might need to analyze next file
+                    # But check if there's an error first
+                    if "error" not in last_content:
+                        self.logger.warning("📊 Detected successful write → Switching to ANALYSIS mode for next file")
+                        return "analysis"
+
+        # Count occurrences for remaining cases
+        code_score = sum(1 for keyword in code_keywords if keyword in recent_text)
+        analysis_score = sum(1 for keyword in analysis_keywords if keyword in recent_text)
+
+        # Detect analysis loop - if we see repeated get_file_structure without write_file
+        message_history = " ".join([msg.get("content", "")[:200] for msg in messages[-10:] if messages]).lower()
+        get_structure_count = message_history.count("get_file_structure")
+        write_file_count = message_history.count("write_file")
+
+        if get_structure_count >= 3 and write_file_count == 0:
+            # Analysis loop detected! Force code generation
+            self.logger.warning("⚠️⚠️⚠️ ANALYSIS LOOP DETECTED!")
+            self.logger.warning(f"   - get_file_structure count: {get_structure_count}")
+            self.logger.warning(f"   - write_file count: {write_file_count}")
+            self.logger.warning("🔧 FORCING CODE GENERATION mode to break the loop")
+            return "code_generation"
+
+        # Strong preference for code generation if triggered
+        if should_generate_code:
+            self.logger.warning("🔧 Code generation trigger detected → CODE GENERATION mode")
+            return "code_generation"
+
+        # Make decision based on scores
+        if code_score > analysis_score:
+            return "code_generation"
+        elif analysis_score > 0:  # Only analyze if there's a clear signal
+            return "analysis"
+        else:
+            # Default: Since this is a code implementation workflow, prefer code_generation
+            # This prevents getting stuck in analysis mode
+            return "code_generation"
 
     def _validate_messages(self, messages: List[Dict]) -> List[Dict]:
         """Validate and clean message list"""
@@ -1019,11 +1365,16 @@ Requirements:
                 history_result = await self.mcp_agent.call_tool(
                     "get_operation_history", {"last_n": 30}
                 )
-                history_data = (
-                    json.loads(history_result)
-                    if isinstance(history_result, str)
-                    else history_result
-                )
+                # Extract content from CallToolResult object
+                if hasattr(history_result, 'content') and history_result.content:
+                    content_text = history_result.content[0].text
+                    history_data = json.loads(content_text)
+                elif isinstance(history_result, str):
+                    history_data = json.loads(history_result)
+                elif isinstance(history_result, dict):
+                    history_data = history_result
+                else:
+                    history_data = {"total_operations": 0, "history": []}
             else:
                 history_data = {"total_operations": 0, "history": []}
 
