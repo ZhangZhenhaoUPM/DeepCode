@@ -492,10 +492,37 @@ Requirements:
                 self.mcp_agent = None
 
     async def _initialize_llm_client(self):
-        """Initialize LLM client (Anthropic or OpenAI) based on API key availability"""
+        """Initialize LLM client (Anthropic, OpenAI, or Ollama) based on API key availability"""
         # Check which API has available key and try that first
         anthropic_key = self.api_config.get("anthropic", {}).get("api_key", "")
         openai_key = self.api_config.get("openai", {}).get("api_key", "")
+        ollama_key = self.api_config.get("ollama", {}).get("api_key", "")
+
+        # Try Ollama first (local, no API key needed, just needs to be running)
+        if ollama_key and ollama_key.strip():
+            try:
+                from openai import AsyncOpenAI
+
+                ollama_config = self.api_config.get("ollama", {})
+                base_url = ollama_config.get("base_url", "http://localhost:11434/v1")
+
+                client = AsyncOpenAI(api_key=ollama_key, base_url=base_url)
+
+                # Get model name from config
+                model_name = self.default_models.get("ollama", "qwen3-coder:30b")
+
+                # Test connection with a simple request
+                try:
+                    await client.chat.completions.create(
+                        model=model_name,
+                        max_tokens=20,
+                        messages=[{"role": "user", "content": "test"}],
+                    )
+                    self.logger.info(f"Using Ollama API with model: {model_name}")
+                    self.logger.info(f"Using Ollama base URL: {base_url}")
+                    return client, "openai"  # Ollama uses OpenAI-compatible API
+                except Exception as e:
+                    self.logger.warning(f"Ollama API unavailable: {e}")
 
         # Try Anthropic API first if key is available
         if anthropic_key and anthropic_key.strip():

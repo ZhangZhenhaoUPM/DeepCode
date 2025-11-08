@@ -89,7 +89,7 @@ def get_default_models(config_path: str = "mcp_agent.config.yaml"):
         config_path: Path to the configuration file
 
     Returns:
-        dict: Dictionary with 'anthropic' and 'openai' default models
+        dict: Dictionary with 'anthropic', 'openai', and 'ollama' default models
     """
     try:
         if os.path.exists(config_path):
@@ -99,20 +99,34 @@ def get_default_models(config_path: str = "mcp_agent.config.yaml"):
             # Handle null values in config sections
             anthropic_config = config.get("anthropic") or {}
             openai_config = config.get("openai") or {}
+            ollama_config = config.get("ollama") or {}
 
             anthropic_model = anthropic_config.get(
                 "default_model", "claude-sonnet-4-20250514"
             )
             openai_model = openai_config.get("default_model", "o3-mini")
+            ollama_model = ollama_config.get("default_model", "qwen3-coder:30b")
 
-            return {"anthropic": anthropic_model, "openai": openai_model}
+            return {
+                "anthropic": anthropic_model,
+                "openai": openai_model,
+                "ollama": ollama_model,
+            }
         else:
             print(f"Config file {config_path} not found, using default models")
-            return {"anthropic": "claude-sonnet-4-20250514", "openai": "o3-mini"}
+            return {
+                "anthropic": "claude-sonnet-4-20250514",
+                "openai": "o3-mini",
+                "ollama": "qwen3-coder:30b",
+            }
 
     except Exception as e:
         print(f"❌Error reading config file {config_path}: {e}")
-        return {"anthropic": "claude-sonnet-4-20250514", "openai": "o3-mini"}
+        return {
+            "anthropic": "claude-sonnet-4-20250514",
+            "openai": "o3-mini",
+            "ollama": "qwen3-coder:30b",
+        }
 
 
 def get_document_segmentation_config(
