@@ -850,25 +850,68 @@ async def execute_bash(command: str, timeout: int = 30) -> str:
 
 
 @mcp.tool()
-async def read_code_mem(file_paths: List[str]) -> str:
+async def read_code_mem(file_paths: List[str] = None) -> str:
     """
     Check if file summaries exist in implement_code_summary.md for multiple files
 
     Args:
-        file_paths: List of file paths to check for summary information in implement_code_summary.md
+        file_paths: List of file paths to check for summary information.
+                   If empty or None, returns all summaries from implement_code_summary.md
 
     Returns:
-        Summary information for all requested files if available
+        Summary information for requested files or all files if file_paths is empty
     """
     try:
-        if not file_paths or not isinstance(file_paths, list):
+        # Handle empty or missing file_paths - return entire summary
+        if not file_paths:
+            # Ensure workspace exists
+            ensure_workspace_exists()
+
+            # Look for implement_code_summary.md in the workspace
+            current_path = Path(WORKSPACE_DIR)
+            summary_file_path = current_path.parent / "implement_code_summary.md"
+
+            if not summary_file_path.exists():
+                result = {
+                    "status": "no_summary",
+                    "message": "No summary file found. No files have been implemented yet.",
+                    "summary_content": "",
+                }
+                log_operation("read_code_mem", {"status": "no_summary_file_all"})
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
+            # Read and return entire summary
+            with open(summary_file_path, "r", encoding="utf-8") as f:
+                summary_content = f.read()
+
+            if not summary_content.strip():
+                result = {
+                    "status": "no_summary",
+                    "message": "Summary file exists but is empty.",
+                    "summary_content": "",
+                }
+                log_operation("read_code_mem", {"status": "empty_summary_all"})
+                return json.dumps(result, ensure_ascii=False, indent=2)
+
             result = {
-                "status": "error",
-                "message": "file_paths parameter is required and must be a list",
+                "status": "success",
+                "message": "Retrieved all file summaries from implement_code_summary.md",
+                "summary_content": summary_content,
+                "file_count": summary_content.count("## File:"),
             }
             log_operation(
-                "read_code_mem_error", {"error": "missing_or_invalid_file_paths"}
+                "read_code_mem",
+                {"status": "all_summaries", "file_count": result["file_count"]}
             )
+            return json.dumps(result, ensure_ascii=False, indent=2)
+
+        # Validate file_paths is a list
+        if not isinstance(file_paths, list):
+            result = {
+                "status": "error",
+                "message": "file_paths parameter must be a list",
+            }
+            log_operation("read_code_mem_error", {"error": "invalid_file_paths_type"})
             return json.dumps(result, ensure_ascii=False, indent=2)
 
         # Remove duplicates while preserving order

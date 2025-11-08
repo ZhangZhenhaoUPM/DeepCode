@@ -89,12 +89,12 @@ openai:
   max_tokens_policy: adaptive
   retry_max_tokens: 32768
 ollama:
-  base_max_tokens: 80000  # Increased from 32768 to support qwen3-coder's full capacity
+  base_max_tokens: 65535  # Maximum tokens for code generation (2^16 - 1)
   default_model: qwen3:32b  # General model for analysis and planning
   code_model: qwen3-coder:30b  # Specialized model for code generation
   vision_model: qwen3-vl:4b  # Vision model for image understanding
   max_tokens_policy: adaptive
-  retry_max_tokens: 100000  # Increased from 32768 to allow larger outputs on retry
+  retry_max_tokens: 65535  # Maximum tokens for retry attempts
   # Model-specific generation parameters (following Qwen3 official best practices)
   generation_params:
     qwen3:32b:  # For thinking/reasoning mode (analysis tasks)

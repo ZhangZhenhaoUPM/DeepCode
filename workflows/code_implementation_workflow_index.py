@@ -689,7 +689,7 @@ Requirements:
         )
 
     async def _call_llm_with_tools(
-        self, client, client_type, system_message, messages, tools, max_tokens=8192, task_type="general"
+        self, client, client_type, system_message, messages, tools, max_tokens=None, task_type="general"
     ):
         """
         Call LLM with tools, using appropriate model based on task type
@@ -818,6 +818,12 @@ Requirements:
         self, client, system_message, messages, tools, max_tokens
     ):
         """Call Anthropic API"""
+        # Set max_tokens from config if not provided
+        if max_tokens is None:
+            # Anthropic has a default limit, use config or reasonable default
+            max_tokens = self.api_config.get("anthropic", {}).get("base_max_tokens", 8192)
+            self.logger.info(f"Using default max_tokens for Anthropic: {max_tokens}")
+
         validated_messages = self._validate_messages(messages)
         if not validated_messages:
             validated_messages = [
@@ -941,6 +947,16 @@ Requirements:
         self, client, system_message, messages, tools, max_tokens
     ):
         """Call OpenAI API with robust JSON error handling and retry mechanism"""
+        # Set max_tokens from config if not provided
+        if max_tokens is None:
+            if self.active_provider == "ollama":
+                max_tokens = self.api_config.get("ollama", {}).get("base_max_tokens", 65535)
+            elif self.active_provider == "openai":
+                max_tokens = self.api_config.get("openai", {}).get("base_max_tokens", 20000)
+            else:
+                max_tokens = 8192  # Fallback default
+            self.logger.info(f"Using default max_tokens from config: {max_tokens}")
+
         openai_tools = []
         for tool in tools:
             openai_tools.append(

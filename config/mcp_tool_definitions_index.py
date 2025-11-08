@@ -113,17 +113,17 @@ class MCPToolDefinitions:
         """Read code memory tool definition - reads from implement_code_summary.md"""
         return {
             "name": "read_code_mem",
-            "description": "Check if file summaries exist in implement_code_summary.md for multiple files in a single call. Returns summaries for all requested files if available.",
+            "description": "Check if file summaries exist in implement_code_summary.md. If file_paths is provided, returns summaries for those specific files. If file_paths is empty or not provided, returns summaries for all files in the memory.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "file_paths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of file paths to check for summary information in implement_code_summary.md",
+                        "description": "List of file paths to check for summary information. If empty or not provided, returns all file summaries.",
                     }
                 },
-                "required": ["file_paths"],
+                "required": [],  # Make file_paths optional
             },
         }
 
