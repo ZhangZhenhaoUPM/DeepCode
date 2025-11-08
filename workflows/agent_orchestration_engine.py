@@ -453,6 +453,62 @@ async def run_resource_processor(analysis_result: str, logger) -> str:
         )
         logger.info(f"🔍 DEBUG: ResourceProcessor LLM returned: {result[:1000]}")
         print(f"\n🔍 DEBUG: ResourceProcessor returned:\n{result}\n")
+
+        # Post-process: If LLM didn't return JSON, try to extract or construct it
+        result_stripped = result.strip()
+        if not result_stripped.startswith("{"):
+            print("⚠️ LLM did not return JSON format, attempting to extract or construct...")
+
+            # Try to extract JSON from the text
+            from utils.file_processor import FileProcessor
+            extracted_json = FileProcessor.extract_json_from_text(result)
+
+            if extracted_json:
+                print(f"✅ Extracted JSON from LLM response: {extracted_json}")
+                result = json.dumps(extracted_json)
+            else:
+                # No JSON found - construct a default response
+                # Try to infer if this is a file that was already processed
+                import re
+                print("⚠️ No JSON found in response, constructing default response...")
+
+                # Look for file paths in the text
+                path_match = re.search(r'(/[^\s]+\.(?:md|pdf|txt))', result)
+                if path_match:
+                    file_path = path_match.group(1)
+                    print(f"   Found file path in text: {file_path}")
+                else:
+                    # Use the most recently created markdown file in deepcode_lab/papers
+                    import os
+                    deepcode_lab = os.path.join(os.getcwd(), "deepcode_lab", "papers")
+                    if os.path.exists(deepcode_lab):
+                        dirs = [d for d in os.listdir(deepcode_lab) if os.path.isdir(os.path.join(deepcode_lab, d))]
+                        if dirs:
+                            dirs.sort(key=lambda d: os.path.getmtime(os.path.join(deepcode_lab, d)), reverse=True)
+                            newest_dir = os.path.join(deepcode_lab, dirs[0])
+                            for file in os.listdir(newest_dir):
+                                if file.endswith('.md'):
+                                    file_path = os.path.join(newest_dir, file)
+                                    print(f"   Using most recent file: {file_path}")
+                                    break
+                        else:
+                            file_path = None
+                    else:
+                        file_path = None
+
+                # Construct JSON response
+                default_response = {
+                    "status": "success" if file_path else "failure",
+                    "paper_path": file_path,
+                    "metadata": {
+                        "title": "N/A",
+                        "authors": [],
+                        "year": "N/A"
+                    }
+                }
+                print(f"   Constructed response: {default_response}")
+                result = json.dumps(default_response)
+
         return result
 
 
