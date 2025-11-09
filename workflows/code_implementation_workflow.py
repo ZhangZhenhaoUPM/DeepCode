@@ -366,8 +366,13 @@ Requirements:
         plan_content,
         target_directory,
     ):
-        """Pure code implementation loop with memory optimization and phase consistency"""
-        max_iterations = 2  # Keep it simple - avoid hallucination
+        """Pure code implementation loop with memory optimization and phase consistency
+
+        Strategy:
+        - Iteration 1: Write code based on plan
+        - Iteration 2: Self-review and verify alignment with original objectives
+        """
+        max_iterations = 2  # Two-phase: (1) Write code (2) Self-review
         iteration = 0
         start_time = time.time()
         max_time = 1800  # 30 minutes
@@ -405,16 +410,53 @@ Requirements:
                 self.logger.warning(f"Time limit reached: {elapsed_time:.2f}s")
                 break
 
-            # # Test simplified memory approach if we have files implemented
-            # if iteration == 5 and code_agent.get_files_implemented_count() > 0:
-            #     self.logger.info("🧪 Testing simplified memory approach...")
-            #     test_results = await memory_agent.test_simplified_memory_approach()
-            #     self.logger.info(f"Memory test results: {test_results}")
+            # Two-phase strategy with explicit instructions
+            if iteration == 1:
+                self.logger.info("=" * 80)
+                self.logger.info("📝 PHASE 1: CODE IMPLEMENTATION")
+                self.logger.info("   Objective: Write code based on reproduction plan")
+                self.logger.info("=" * 80)
+                phase_instruction = "\n\n**PHASE 1: CODE IMPLEMENTATION**\nFocus on writing code according to the plan. Implement all core components."
+            elif iteration == 2:
+                self.logger.info("=" * 80)
+                self.logger.info("🔍 PHASE 2: SELF-REVIEW & ALIGNMENT CHECK")
+                self.logger.info("   Objective: Review code and verify alignment with original objectives")
+                self.logger.info("=" * 80)
+                files_count = code_agent.get_files_implemented_count()
+                phase_instruction = f"""
 
-            # self.logger.info(f"Pure code implementation iteration {iteration}: generating code")
+**PHASE 2: SELF-REVIEW & ALIGNMENT CHECK**
+
+You have written {files_count} files in Phase 1. Now perform a critical self-review:
+
+1. **Alignment Check**: Compare your implementation against the original paper/plan
+   - Does the code implement the core algorithms mentioned in the paper?
+   - Are you solving the RIGHT problem as stated in the objectives?
+   - Have you strayed from the original purpose?
+
+2. **Completeness Check**:
+   - Are all critical components from the plan implemented?
+   - Any missing files or incomplete implementations?
+
+3. **Quality Check**:
+   - Does the code actually work for its intended purpose?
+   - Any obvious bugs or logical errors?
+
+4. **Corrections**: If you find misalignment or issues, fix them now.
+
+Review thoroughly and make necessary corrections to ensure code serves original objectives."""
+            else:
+                phase_instruction = ""
 
             messages = self._validate_messages(messages)
             current_system_message = code_agent.get_system_prompt()
+
+            # Inject phase instruction into the last user message if this is start of phase
+            if phase_instruction and iteration <= 2:
+                if messages and messages[-1]["role"] == "user":
+                    messages[-1]["content"] += phase_instruction
+                else:
+                    messages.append({"role": "user", "content": phase_instruction})
 
             # Round logging removed
 
