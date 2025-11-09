@@ -14,15 +14,17 @@ class FileProcessor:
     """
 
     @staticmethod
-    def extract_file_path(file_info: Union[str, Dict]) -> Optional[str]:
+    def extract_file_path(file_info: Union[str, Dict]) -> tuple[Optional[str], Optional[str]]:
         """
-        Extract paper directory path from the input information.
+        Extract paper directory path and file path from the input information.
 
         Args:
             file_info: Either a JSON string or a dictionary containing file information
 
         Returns:
-            Optional[str]: The extracted paper directory path or None if not found
+            tuple[Optional[str], Optional[str]]: (paper_dir, paper_file_path)
+                - paper_dir: The extracted paper directory path
+                - paper_file_path: The actual paper file path (corrected if needed)
         """
         try:
             # Handle direct file path input
@@ -31,13 +33,16 @@ class FileProcessor:
                 if file_info.endswith(
                     (".md", ".pdf", ".txt", ".docx", ".doc", ".html", ".htm")
                 ):
-                    # It's a file path, return the directory
-                    return os.path.dirname(os.path.abspath(file_info))
+                    # It's a file path, return the directory and file path
+                    abs_path = os.path.abspath(file_info)
+                    return os.path.dirname(abs_path), abs_path
                 elif os.path.exists(file_info):
                     if os.path.isfile(file_info):
-                        return os.path.dirname(os.path.abspath(file_info))
+                        abs_path = os.path.abspath(file_info)
+                        return os.path.dirname(abs_path), abs_path
                     elif os.path.isdir(file_info):
-                        return os.path.abspath(file_info)
+                        # It's a directory, return dir and None for file path
+                        return os.path.abspath(file_info), None
 
                 # Try to parse as JSON
                 try:
@@ -60,27 +65,47 @@ class FileProcessor:
             print(f"  info_dict: {info_dict}")
             print(f"  paper_path: {paper_path}")
 
-            # If paper_path is None or empty, try to find the moved file in deepcode_lab
-            if not paper_path or paper_path == "None":
-                print("  ⚠️ paper_path is None, searching for moved file...")
+            # If paper_path is None, empty, or file doesn't exist, try to find the actual file
+            if not paper_path or paper_path == "None" or not os.path.exists(paper_path):
+                if paper_path and not os.path.exists(paper_path):
+                    print(f"  ⚠️ paper_path does not exist: {paper_path}, searching for actual file...")
+                else:
+                    print("  ⚠️ paper_path is None/empty, searching for moved file...")
+
                 # Look in deepcode_lab/papers directory
                 deepcode_lab = os.path.join(os.getcwd(), "deepcode_lab", "papers")
                 if os.path.exists(deepcode_lab):
-                    # Find the most recently created directory
-                    dirs = [d for d in os.listdir(deepcode_lab) if os.path.isdir(os.path.join(deepcode_lab, d))]
-                    if dirs:
-                        # Sort by modification time, get the newest
-                        dirs.sort(key=lambda d: os.path.getmtime(os.path.join(deepcode_lab, d)), reverse=True)
-                        newest_dir = os.path.join(deepcode_lab, dirs[0])
-                        # Look for .md file in this directory
-                        for file in os.listdir(newest_dir):
-                            if file.endswith('.md'):
-                                paper_path = os.path.join(newest_dir, file)
-                                print(f"  ✅ Found moved file: {paper_path}")
-                                break
+                    # First, check papers root directory for .md files
+                    for file in os.listdir(deepcode_lab):
+                        file_path = os.path.join(deepcode_lab, file)
+                        if os.path.isfile(file_path) and file.endswith('.md'):
+                            paper_path = file_path
+                            print(f"  ✅ Found markdown in papers root: {paper_path}")
+                            break
+
+                    # If not found in root, search subdirectories
+                    if not paper_path or not os.path.exists(paper_path):
+                        dirs = [d for d in os.listdir(deepcode_lab) if os.path.isdir(os.path.join(deepcode_lab, d))]
+                        if dirs:
+                            # Sort by modification time, get the newest
+                            dirs.sort(key=lambda d: os.path.getmtime(os.path.join(deepcode_lab, d)), reverse=True)
+                            newest_dir = os.path.join(deepcode_lab, dirs[0])
+                            # Look for .md file in this directory
+                            for file in os.listdir(newest_dir):
+                                if file.endswith('.md'):
+                                    paper_path = os.path.join(newest_dir, file)
+                                    print(f"  ✅ Found markdown in subdirectory: {paper_path}")
+                                    break
 
             if not paper_path or paper_path == "None":
                 raise ValueError(f"No paper_path or path found in input dictionary. Keys found: {list(info_dict.keys())}, Dict: {info_dict}")
+
+            # Update the dictionary with the corrected paper_path
+            # This ensures subsequent code uses the correct file path
+            info_dict['paper_path'] = paper_path
+            if isinstance(file_info, dict):
+                file_info['paper_path'] = paper_path
+            print(f"  📝 Updated dict with correct paper_path: {paper_path}")
 
             # Get the directory path instead of the file path
             paper_dir = os.path.dirname(paper_path)
@@ -89,7 +114,10 @@ class FileProcessor:
             if not os.path.isabs(paper_dir):
                 paper_dir = os.path.abspath(paper_dir)
 
-            return paper_dir
+            if not os.path.isabs(paper_path):
+                paper_path = os.path.abspath(paper_path)
+
+            return paper_dir, paper_path
 
         except (AttributeError, TypeError) as e:
             raise ValueError(f"Invalid input format: {str(e)}")
@@ -350,8 +378,9 @@ class FileProcessor:
                                     file_input["paper_path"] = found_file  # Update the dict
                                     break
 
-            # Extract paper directory path
-            paper_dir = cls.extract_file_path(file_input)
+            # Extract paper directory path and corrected file path
+            paper_dir, corrected_file_path = cls.extract_file_path(file_input)
+            print(f"  📂 Extracted: paper_dir={paper_dir}, corrected_file_path={corrected_file_path}")
 
             # If base_dir is provided, adjust paper_dir to be relative to base_dir
             if base_dir and paper_dir:
@@ -379,8 +408,11 @@ class FileProcessor:
                 raise ValueError("Could not determine paper directory path")
 
             # Get the actual file path
-            file_path = None
-            if isinstance(file_input, str):
+            # Use the corrected file path from extract_file_path if available
+            file_path = corrected_file_path
+
+            # If we don't have a file path yet, try to extract it from file_input
+            if not file_path and isinstance(file_input, str):
                 # 尝试解析为JSON（处理下载结果）
                 try:
                     parsed_json = json.loads(file_input)
@@ -438,8 +470,8 @@ class FileProcessor:
                                     )
                         else:
                             raise ValueError(f"Invalid input: {file_input}")
-            else:
-                # Dictionary input
+            elif not file_path and isinstance(file_input, dict):
+                # Dictionary input (only if we still don't have a file_path)
                 file_path = file_input.get("paper_path") or file_input.get("path")
 
                 # If paper_path is None or doesn't exist, try to find markdown in the directory

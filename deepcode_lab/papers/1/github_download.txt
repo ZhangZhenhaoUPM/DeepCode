@@ -1,1 +1,0 @@
-Automated repository acquisition skipped - fast mode enabled for optimized processing

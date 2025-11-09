@@ -367,10 +367,10 @@ Requirements:
         target_directory,
     ):
         """Pure code implementation loop with memory optimization and phase consistency"""
-        max_iterations = 800
+        max_iterations = 2  # Keep it simple - avoid hallucination
         iteration = 0
         start_time = time.time()
-        max_time = 7200  # 120 minutes (2 hours)
+        max_time = 1800  # 30 minutes
 
         # Initialize specialized agents
         code_agent = CodeImplementationAgent(

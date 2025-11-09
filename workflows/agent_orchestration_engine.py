@@ -76,7 +76,19 @@ def _assess_output_completeness(text: str) -> float:
         float: 完整性分数 (0.0-1.0)，越高表示越完整
     """
     if not text or len(text.strip()) < 500:
+        print(f"   ❌ Output too short: {len(text) if text else 0} chars (minimum 500)")
         return 0.0
+
+    # 显示输出预览
+    lines = text.strip().splitlines()
+    print(f"\n   🔍 Output Preview (first 5 lines):")
+    for i, line in enumerate(lines[:5]):
+        print(f"      {i+1}: {line[:100]}")
+
+    print(f"\n   🔍 Output Preview (last 5 lines):")
+    for i, line in enumerate(lines[-5:]):
+        print(f"      -{5-i}: {line[:100]}")
+    print()
 
     score = 0.0
     text_lower = text.lower()
@@ -96,6 +108,14 @@ def _assess_output_completeness(text: str) -> float:
     score += section_score * 0.5
 
     print(f"   📋 Required sections: {sections_found}/{len(required_sections)}")
+
+    # 详细诊断：显示缺失的sections
+    missing_sections = [section for section in required_sections if section not in text_lower]
+    if missing_sections:
+        print(f"   ❌ Missing sections: {', '.join(missing_sections)}")
+
+    # 显示文本长度信息
+    print(f"   📏 Output length: {len(text)} chars, {len(text.split())} words, {len(text.splitlines())} lines")
 
     # 2. 检查YAML结构完整性 (权重: 0.2)
     has_yaml_start = any(
@@ -159,23 +179,24 @@ def _adjust_params_for_retry(params: RequestParams, retry_count: int) -> Request
     - 需要输出包含5个详细sections的完整YAML（10000+ tokens）
     - 因此需要为OUTPUT预留充足的token空间
     """
-    # 激进的token增长策略
+    # 激进的token增长策略（针对Ollama qwen3优化）
     if retry_count == 0:
-        # 第一次重试：直接跳到40K，确保有足够输出空间
-        new_max_tokens = 40000
-    elif retry_count == 1:
-        # 第二次重试：进一步增加到60K
-        new_max_tokens = 60000
-    else:
-        # 第三次及以上：使用最大限制
+        # 第一次重试：跳到80K（qwen3-coder最大推荐输出）
         new_max_tokens = 80000
+    elif retry_count == 1:
+        # 第二次重试：使用更大的限制
+        new_max_tokens = 100000
+    else:
+        # 第三次及以上：使用Ollama的上下文窗口上限
+        new_max_tokens = 128000
 
-    # 随着重试次数增加，降低temperature以获得更一致、更可预测的输出
-    new_temperature = max(params.temperature - (retry_count * 0.15), 0.05)
+    # 保持Qwen3官方推荐的temperature不变（0.6 for thinking mode）
+    # 不降低temperature，以避免greedy decoding导致的性能下降和无限重复
+    new_temperature = params.temperature
 
     print(f"🔧 Adjusting parameters for retry {retry_count + 1}:")
     print(f"   Token limit: {params.maxTokens} → {new_max_tokens}")
-    print(f"   Temperature: {params.temperature:.2f} → {new_temperature:.2f}")
+    print(f"   Temperature: {params.temperature:.2f} (keeping Qwen3 official recommendation)")
     print("   💡 Strategy: Ensure sufficient output space for complete 5-section YAML")
 
     return RequestParams(
@@ -351,9 +372,10 @@ async def run_research_analyzer(prompt_text: str, logger) -> str:
                 raise
 
             # Set higher token output for research analysis
+            # Qwen3 32B支持256K context，输出可以用65K（推荐的coder输出长度）
             analysis_params = RequestParams(
-                maxTokens=6144,  # 使用 camelCase
-                temperature=0.3,
+                maxTokens=65536,  # 使用 camelCase - 足够的空间用于完整分析
+                temperature=0.6,  # Qwen3官方推荐：用于thinking/reasoning模式
             )
 
             print(
@@ -361,8 +383,10 @@ async def run_research_analyzer(prompt_text: str, logger) -> str:
             )
 
             try:
+                # Enable Qwen3 thinking mode with /think instruction
+                thinking_prompt = f"/think\n\n{prompt_text}"
                 raw_result = await analyzer.generate_str(
-                    message=prompt_text, request_params=analysis_params
+                    message=thinking_prompt, request_params=analysis_params
                 )
 
                 print("✅ LLM request completed")
@@ -444,8 +468,8 @@ async def run_resource_processor(analysis_result: str, logger) -> str:
 
         # Set higher token output for resource processing
         processor_params = RequestParams(
-            maxTokens=4096,  # 使用 camelCase
-            temperature=0.2,
+            maxTokens=32768,  # 使用 camelCase - 足够的空间用于资源处理结果
+            temperature=0.6,  # Qwen3官方推荐：用于thinking/reasoning模式
         )
 
         result = await processor.generate_str(
@@ -566,16 +590,17 @@ async def run_code_analyzer(
     # Advanced token management system with dynamic scaling
     # 关键优化：ParallelLLM需要为输出预留充足空间
     # fan_in agent会接收fan_out agents的完整输出作为context，然后需要生成完整YAML
+    # 增加初始token限制以支持长文档输出（特别是对于Ollama qwen3模型）
     if use_segmentation:
         # 分段模式：输入已优化，但仍需大量输出空间
-        max_tokens_limit = 30000  # 充足的输出空间确保5个sections完整生成
-        temperature = 0.2  # 稍微降低temperature以提高一致性
-        print("🧠 Using SEGMENTED mode: max_tokens=30000 for complete YAML output")
+        max_tokens_limit = 65536  # 使用qwen3-coder推荐的65K输出长度
+        temperature = 0.6  # Qwen3官方推荐：用于thinking/reasoning模式
+        print("🧠 Using SEGMENTED mode: max_tokens=65536, temp=0.6 (Qwen3 official)")
     else:
         # 传统模式：需要更多输出空间应对长篇分析结果
-        max_tokens_limit = 30000  # 足够的空间确保完整输出
-        temperature = 0.3
-        print("🧠 Using TRADITIONAL mode: max_tokens=30000 for complete YAML output")
+        max_tokens_limit = 65536  # 使用qwen3-coder推荐的65K输出长度
+        temperature = 0.6  # Qwen3官方推荐：用于thinking/reasoning模式
+        print("🧠 Using TRADITIONAL mode: max_tokens=65536, temp=0.6 (Qwen3 official)")
 
     enhanced_params = RequestParams(
         maxTokens=max_tokens_limit,  # 注意：使用 camelCase 而不是 snake_case
@@ -583,7 +608,10 @@ async def run_code_analyzer(
     )
 
     # Concise message for multi-agent paper analysis and code planning
-    message = f"""Analyze the research paper in directory: {paper_dir}
+    # Enable Qwen3 thinking mode with /think instruction
+    message = f"""/think
+
+Analyze the research paper in directory: {paper_dir}
 
 Please locate and analyze the markdown (.md) file containing the research paper. Based on your analysis, generate a comprehensive code reproduction plan that includes:
 
@@ -660,8 +688,8 @@ async def github_repo_download(search_result: str, paper_dir: str, logger) -> st
 
         # Set higher token output for GitHub download
         github_params = RequestParams(
-            maxTokens=4096,  # 使用 camelCase
-            temperature=0.1,
+            maxTokens=32768,  # 使用 camelCase - 足够的空间用于GitHub仓库分析
+            temperature=0.6,  # Qwen3官方推荐：用于thinking/reasoning模式
         )
 
         return await downloader.generate_str(
@@ -685,7 +713,9 @@ async def paper_reference_analyzer(paper_dir: str, logger) -> str:
         instruction=PAPER_REFERENCE_ANALYZER_PROMPT,
         server_names=["filesystem", "fetch"],
     )
-    message = f"""Analyze the research paper in directory: {paper_dir}
+    message = f"""/think
+
+Analyze the research paper in directory: {paper_dir}
 
 Please locate and analyze the markdown (.md) file containing the research paper. **Focus specifically on the References/Bibliography section** to identify and analyze the 5 most relevant references that have GitHub repositories.
 
@@ -1359,8 +1389,8 @@ async def run_chat_planning_agent(user_input: str, logger) -> str:
 
             # Set higher token output for comprehensive planning
             planning_params = RequestParams(
-                maxTokens=8192,  # 使用 camelCase - Higher token limit for detailed plans
-                temperature=0.2,  # Lower temperature for more structured output
+                maxTokens=65536,  # 使用 camelCase - 足够的空间用于详细的实施计划
+                temperature=0.6,  # Qwen3官方推荐：用于thinking/reasoning模式
             )
 
             print(

@@ -61,8 +61,9 @@ class ConciseMemoryAgent:
 
         # Store default models configuration
         self.default_models = default_models or {
-            "anthropic": "anthropic/claude-sonnet-4.5",
-            "openai": "anthropic/claude-sonnet-4.5",
+            "ollama": "qwen3-coder:30b",
+            "anthropic": "claude-sonnet-4-20250514",
+            "openai": "gpt-4o",
         }
 
         # Memory state tracking - new logic: trigger after each write_file
