@@ -1027,6 +1027,96 @@ Format the output as a detailed Markdown report."""
         return handle_gemini_api_review(code_directory)
 
 
+def handle_iterative_improvement(
+    code_directory: str,
+    target_score: float,
+    max_iterations: int,
+    iteration_mode: str
+) -> Dict[str, Any]:
+    """
+    Handle iterative improvement workflow
+
+    Args:
+        code_directory: Generated code directory
+        target_score: Target quality score
+        max_iterations: Maximum iterations
+        iteration_mode: "Quick" or "Full"
+
+    Returns:
+        Iteration result dictionary
+    """
+    import subprocess
+    from pathlib import Path
+
+    try:
+        st.info(f"🚀 Starting iterative improvement...")
+
+        # Choose script based on mode
+        if "Quick" in iteration_mode:
+            script = "quick_cross_review_and_fix.py"
+            st.caption("Using quick mode (core files only)")
+        else:
+            script = "iterative_code_improvement.py"
+            st.caption("Using full mode (all files)")
+
+        # Run iteration script
+        with st.spinner(f"Running iterative improvement (this may take a few minutes)..."):
+            result = subprocess.run(
+                ["python", script, code_directory, str(target_score), str(max_iterations)],
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minutes max
+            )
+
+            output = result.stdout + result.stderr
+
+            # Display output in expander
+            with st.expander("📋 Iteration Log", expanded=False):
+                st.code(output, language="text")
+
+            # Try to parse results
+            final_score = 0.0
+            iterations_used = 0
+
+            # Extract score from output
+            import re
+            score_match = re.search(r'Final Score:\s*([\d.]+)/10', output)
+            if score_match:
+                final_score = float(score_match.group(1))
+
+            iter_match = re.search(r'Iteration (\d+)/', output)
+            if iter_match:
+                iterations_used = int(iter_match.group(1))
+
+            # Check for reports
+            review_dir = Path(code_directory).parent / "iterative_reviews"
+            history_file = review_dir / "complete_history.json"
+
+            if history_file.exists():
+                st.success(f"📄 Complete history saved: {history_file}")
+
+            return {
+                "status": "success",
+                "final_score": final_score,
+                "iterations_used": iterations_used,
+                "output": output,
+                "history_file": str(history_file) if history_file.exists() else None
+            }
+
+    except subprocess.TimeoutExpired:
+        st.error("⚠️  Iterative improvement timeout (10min)")
+        return {
+            "status": "error",
+            "error": "Timeout after 10 minutes"
+        }
+    except Exception as e:
+        st.error(f"❌ Error: {e}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+
 def handle_start_processing_button(input_source: str, input_type: str):
     """
     Handle start processing button click
@@ -1054,13 +1144,13 @@ def handle_start_processing_button(input_source: str, input_type: str):
         if result["status"] == "success":
             display_status("All operations completed successfully! 🎉", "success")
 
+            # Extract generated code directory for review/iteration
+            code_directory = extract_code_directory_from_result(result)
+
             # Run code review if enabled
             if enable_review:
                 st.markdown("---")
                 st.markdown("### 🔍 Code Review Phase")
-
-                # Extract generated code directory from result
-                code_directory = extract_code_directory_from_result(result)
 
                 if code_directory:
                     review_result = handle_code_review(code_directory, review_method)
@@ -1074,6 +1164,41 @@ def handle_start_processing_button(input_source: str, input_type: str):
                         display_status(f"Code review failed: {review_result.get('error', 'Unknown error')}", "warning")
                 else:
                     display_status("Could not locate generated code directory for review", "warning")
+
+            # Run iterative improvement if enabled
+            enable_iterative = st.session_state.get("enable_iterative", False)
+            if enable_iterative and code_directory:
+                st.markdown("---")
+                st.markdown("### 🔄 Iterative Improvement Phase")
+
+                target_score = st.session_state.get("target_score", 8.0)
+                max_iterations = st.session_state.get("max_iterations", 3)
+                iteration_mode = st.session_state.get("iteration_mode", "Quick (Core files only)")
+
+                st.info(f"🎯 Target: {target_score}/10 | Max Iterations: {max_iterations}")
+
+                iteration_result = handle_iterative_improvement(
+                    code_directory,
+                    target_score,
+                    max_iterations,
+                    iteration_mode
+                )
+
+                # Add iteration result to main result
+                result["iteration_result"] = iteration_result
+
+                if iteration_result["status"] == "success":
+                    final_score = iteration_result.get("final_score", 0)
+                    iterations_used = iteration_result.get("iterations_used", 0)
+
+                    if final_score >= target_score:
+                        display_status(f"🎉 Target reached! Final score: {final_score:.2f}/10 in {iterations_used} iterations", "success")
+                    else:
+                        display_status(f"⚠️  Partial improvement: {final_score:.2f}/10 in {iterations_used} iterations", "warning")
+                else:
+                    display_status(f"Iterative improvement failed: {iteration_result.get('error', 'Unknown error')}", "error")
+            elif enable_iterative and not code_directory:
+                display_status("Could not locate generated code directory for iterative improvement", "warning")
         else:
             display_status("Error during processing", "error")
 

@@ -385,6 +385,60 @@ def sidebar_control_panel() -> Dict[str, Any]:
         else:
             st.info("⏸️ Code review disabled")
 
+        st.markdown("---")
+
+        # Iterative improvement settings
+        st.markdown("#### 🔄 Iterative Improvement")
+        enable_iterative = st.checkbox(
+            "🔄 Enable Iterative Improvement",
+            value=False,
+            help="Automatically iterate code reviews and fixes until target quality score is reached. Uses Gemini + Codex cross-validation.",
+            key="enable_iterative",
+        )
+
+        if enable_iterative:
+            st.success("✅ Iterative improvement enabled")
+
+            # Target score
+            target_score = st.slider(
+                "Target Quality Score",
+                min_value=6.0,
+                max_value=10.0,
+                value=8.0,
+                step=0.5,
+                help="Stop iterating when code reaches this quality score",
+                key="target_score"
+            )
+
+            # Max iterations
+            max_iterations = st.slider(
+                "Maximum Iterations",
+                min_value=1,
+                max_value=5,
+                value=3,
+                help="Maximum number of review-fix cycles",
+                key="max_iterations"
+            )
+
+            st.info(f"🎯 Target: {target_score}/10 in ≤{max_iterations} iterations")
+
+            # Show iteration mode
+            iteration_mode = st.radio(
+                "Iteration Mode",
+                options=["Quick (Core files only)", "Full (All files)"],
+                index=0,
+                help="Quick mode reviews only core files to avoid timeouts",
+                key="iteration_mode"
+            )
+
+            if "Quick" in iteration_mode:
+                st.caption("📝 Will review: main.py, model.py, trainer.py, etc.")
+            else:
+                st.caption("📝 Will review: all Python files")
+
+        else:
+            st.info("⏸️ Iterative improvement disabled")
+
         # System information
         st.markdown("### 📊 System Info")
         st.info(f"**Python:** {sys.version.split()[0]}")
@@ -409,6 +463,10 @@ def sidebar_control_panel() -> Dict[str, Any]:
             "enable_indexing": enable_indexing,  # Add indexing toggle state
             "enable_review": enable_review,  # Add code review toggle state
             "review_method": review_method if enable_review else None,  # Review method selection
+            "enable_iterative": enable_iterative,  # Add iterative improvement toggle
+            "target_score": target_score if enable_iterative else 8.0,
+            "max_iterations": max_iterations if enable_iterative else 3,
+            "iteration_mode": iteration_mode if enable_iterative else "Quick (Core files only)",
         }
 
 
