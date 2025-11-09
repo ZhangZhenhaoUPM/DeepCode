@@ -461,11 +461,9 @@ def sidebar_control_panel() -> Dict[str, Any]:
         # Processing history
         history_info = display_processing_history()
 
-        # Ensure session state is updated with current values
-        st.session_state.enable_iterative = enable_iterative
-        st.session_state.target_score = target_score
-        st.session_state.max_iterations = max_iterations
-        st.session_state.iteration_mode = iteration_mode
+        # Note: Do NOT manually update session state for widgets with 'key' parameter
+        # Streamlit automatically binds widget values to session state using the key
+        # Manual update will cause: "cannot be modified after the widget is instantiated"
 
         return {
             "processing": st.session_state.processing,
