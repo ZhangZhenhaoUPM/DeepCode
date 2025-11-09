@@ -396,6 +396,11 @@ def sidebar_control_panel() -> Dict[str, Any]:
             key="enable_iterative",
         )
 
+        # Initialize default values for iterative improvement settings
+        target_score = 8.0
+        max_iterations = 3
+        iteration_mode = "Quick (Core files only)"
+
         if enable_iterative:
             st.success("✅ Iterative improvement enabled")
 
@@ -456,6 +461,12 @@ def sidebar_control_panel() -> Dict[str, Any]:
         # Processing history
         history_info = display_processing_history()
 
+        # Ensure session state is updated with current values
+        st.session_state.enable_iterative = enable_iterative
+        st.session_state.target_score = target_score
+        st.session_state.max_iterations = max_iterations
+        st.session_state.iteration_mode = iteration_mode
+
         return {
             "processing": st.session_state.processing,
             "history_count": history_info["count"],
@@ -464,9 +475,9 @@ def sidebar_control_panel() -> Dict[str, Any]:
             "enable_review": enable_review,  # Add code review toggle state
             "review_method": review_method if enable_review else None,  # Review method selection
             "enable_iterative": enable_iterative,  # Add iterative improvement toggle
-            "target_score": target_score if enable_iterative else 8.0,
-            "max_iterations": max_iterations if enable_iterative else 3,
-            "iteration_mode": iteration_mode if enable_iterative else "Quick (Core files only)",
+            "target_score": target_score,
+            "max_iterations": max_iterations,
+            "iteration_mode": iteration_mode,
         }
 
 

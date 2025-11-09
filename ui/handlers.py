@@ -1167,6 +1167,12 @@ def handle_start_processing_button(input_source: str, input_type: str):
 
             # Run iterative improvement if enabled
             enable_iterative = st.session_state.get("enable_iterative", False)
+
+            # Debug logging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"🔍 Checking iterative improvement: enable_iterative={enable_iterative}, code_directory={code_directory}")
+
             if enable_iterative and code_directory:
                 st.markdown("---")
                 st.markdown("### 🔄 Iterative Improvement Phase")
@@ -1198,7 +1204,10 @@ def handle_start_processing_button(input_source: str, input_type: str):
                 else:
                     display_status(f"Iterative improvement failed: {iteration_result.get('error', 'Unknown error')}", "error")
             elif enable_iterative and not code_directory:
+                logger.warning("⚠️  Iterative improvement enabled but code_directory not found!")
                 display_status("Could not locate generated code directory for iterative improvement", "warning")
+            elif not enable_iterative:
+                logger.info("ℹ️  Iterative improvement is DISABLED in session state")
         else:
             display_status("Error during processing", "error")
 
