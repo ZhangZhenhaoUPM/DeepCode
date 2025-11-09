@@ -60,6 +60,13 @@ class CodeImplementationWorkflow:
             True  # Default value, will be overridden by run_workflow parameter
         )
         self.active_model = None  # Track which model is actually being used
+        self.active_provider = None  # Track which provider is being used (ollama, openai, anthropic)
+        self.task_model_routing = self._load_task_model_routing()  # Multi-model strategy
+
+        # Track last logged state to avoid repetitive logs
+        self._last_logged_task_type = None
+        self._last_logged_model = None
+        self._model_switch_count = 0
 
     def _load_api_config(self) -> Dict[str, Any]:
         """Load API configuration from YAML file"""
@@ -69,12 +76,70 @@ class CodeImplementationWorkflow:
         except Exception as e:
             raise Exception(f"Failed to load API config: {e}")
 
+    def _load_task_model_routing(self) -> Dict[str, Any]:
+        """Load task-based model routing configuration"""
+        try:
+            with open("mcp_agent.config.yaml", "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                routing = config.get("task_model_routing", {})
+
+                # Load generation parameters for different models
+                ollama_config = config.get("ollama", {})
+                self.generation_params = ollama_config.get("generation_params", {})
+
+                if routing.get("enabled", False):
+                    self.logger.info("✅ Multi-model routing enabled")
+                    self.logger.info(f"   Analysis model: {routing.get('strategies', {}).get('analysis')}")
+                    self.logger.info(f"   Code generation model: {routing.get('strategies', {}).get('code_generation')}")
+                    self.logger.info(f"   Vision model: {routing.get('strategies', {}).get('vision')}")
+
+                    # Log generation parameters if available
+                    if self.generation_params:
+                        self.logger.info("✅ Model-specific generation parameters loaded")
+                        for model, params in self.generation_params.items():
+                            self.logger.info(f"   {model}: temp={params.get('temperature', 0.2)}, top_p={params.get('top_p', 0.95)}")
+
+                return routing
+        except Exception as e:
+            self.logger.warning(f"Failed to load task model routing: {e}")
+            self.generation_params = {}
+            return {"enabled": False}
+
     def _create_logger(self) -> logging.Logger:
         """Create and configure logger"""
         logger = logging.getLogger(__name__)
         # Don't add handlers to child loggers - let them propagate to root
         logger.setLevel(logging.INFO)
         return logger
+
+    def _select_model_for_task(self, task_type: str = "general") -> str:
+        """Select appropriate model based on task type (logging handled by caller)"""
+        if not self.task_model_routing.get("enabled", False):
+            return self.active_model or self.default_models.get("ollama", "qwen3-coder:30b")
+
+        strategies = self.task_model_routing.get("strategies", {})
+
+        if task_type == "code_generation":
+            model = strategies.get("code_generation", "qwen3-coder:30b")
+        elif task_type == "analysis":
+            model = strategies.get("analysis", "qwen3:32b")
+        elif task_type == "vision":
+            model = strategies.get("vision", "qwen3-vl:4b")
+        else:
+            model = strategies.get("analysis", self.default_models.get("ollama", "qwen3:32b"))
+
+        return model
+
+    def _get_generation_params(self, model_name: str) -> Dict[str, Any]:
+        """Get generation parameters for specific model"""
+        if not hasattr(self, 'generation_params'):
+            return {}
+
+        params = self.generation_params.get(model_name, {})
+        if params:
+            self.logger.debug(f"📋 Using generation params for {model_name}: {params}")
+
+        return params
 
     def _read_plan_file(self, plan_file_path: str) -> str:
         """Read implementation plan file"""
@@ -123,6 +188,18 @@ class CodeImplementationWorkflow:
             self.logger.info(
                 f"⚙️  Read tools: {'ENABLED' if self.enable_read_tools else 'DISABLED'}"
             )
+
+            # Log task routing configuration once at start
+            if self.task_model_routing.get("enabled", False):
+                strategies = self.task_model_routing.get("strategies", {})
+                self.logger.info("🔄 Task routing configuration:")
+                self.logger.info(f"   - Code generation: {strategies.get('code_generation', 'N/A')}")
+                self.logger.info(f"   - Analysis: {strategies.get('analysis', 'N/A')}")
+                self.logger.info(f"   - Vision: {strategies.get('vision', 'N/A')}")
+                self.logger.info("   ℹ️  Model switches will be logged only when they occur")
+            else:
+                self.logger.info("🔄 Task routing: DISABLED")
+
             self.logger.info("=" * 80)
 
             results = {}
@@ -341,9 +418,17 @@ Requirements:
 
             # Round logging removed
 
-            # Call LLM
+            # Determine task type: switch to code_generation if we see analysis loops
+            is_in_loop = code_agent.is_in_analysis_loop()
+            task_type = "code_generation" if is_in_loop else "general"
+
+            if is_in_loop:
+                self.logger.warning(f"⚠️ ANALYSIS LOOP DETECTED - Forcing task_type=code_generation")
+
+            # Call LLM with task type
+            self.logger.info(f"📞 Calling LLM with task_type={task_type}")
             response = await self._call_llm_with_tools(
-                client, client_type, current_system_message, messages, tools
+                client, client_type, current_system_message, messages, tools, task_type=task_type
             )
 
             response_content = response.get("content", "").strip()
@@ -429,6 +514,9 @@ Requirements:
                 ]
             ):
                 self.logger.info("Code implementation declared complete")
+                # Log model switching statistics
+                if self._model_switch_count > 0:
+                    self.logger.info(f"📊 Total model switches during implementation: {self._model_switch_count}")
                 break
 
             # Emergency trim if too long
@@ -519,6 +607,7 @@ Requirements:
                     messages=[{"role": "user", "content": "test"}],
                 )
                 self.active_model = model_name  # Save the model being used
+                self.active_provider = "ollama"  # Track provider
                 self.logger.info(f"Using Ollama API with model: {model_name}")
                 self.logger.info(f"Using Ollama base URL: {base_url}")
                 return client, "openai"  # Ollama uses OpenAI-compatible API
@@ -538,6 +627,7 @@ Requirements:
                     messages=[{"role": "user", "content": "test"}],
                 )
                 self.active_model = self.default_models["anthropic"]  # Save the model
+                self.active_provider = "anthropic"  # Track provider
                 self.logger.info(
                     f"Using Anthropic API with model: {self.default_models['anthropic']}"
                 )
@@ -584,6 +674,7 @@ Requirements:
                     else:
                         raise
                 self.active_model = model_name  # Save the model
+                self.active_provider = "openai"  # Track provider
                 self.logger.info(f"Using OpenAI API with model: {model_name}")
                 if base_url:
                     self.logger.info(f"Using custom base URL: {base_url}")
@@ -596,9 +687,37 @@ Requirements:
         )
 
     async def _call_llm_with_tools(
-        self, client, client_type, system_message, messages, tools, max_tokens=8192
+        self, client, client_type, system_message, messages, tools, max_tokens=8192, task_type="general"
     ):
-        """Call LLM with tools"""
+        """Call LLM with tools, using appropriate model based on task type"""
+        routing_enabled = self.task_model_routing.get("enabled", False)
+        is_ollama = self.active_provider == "ollama"
+
+        # Select model based on task type if enabled and using Ollama
+        original_model = None
+        model_for_task = None
+
+        if routing_enabled and is_ollama:
+            model_for_task = self._select_model_for_task(task_type)
+            original_model = self.active_model
+
+            # Only log when task type or model changes (avoid repetitive logs)
+            should_log = (
+                task_type != self._last_logged_task_type or
+                model_for_task != self._last_logged_model
+            )
+
+            if should_log:
+                self.logger.info(f"🔄 Task routing: {task_type} → {model_for_task}")
+                if original_model != model_for_task:
+                    self._model_switch_count += 1
+                    self.logger.info(f"   ✅ Model switch #{self._model_switch_count}: {original_model} → {model_for_task}")
+
+                self._last_logged_task_type = task_type
+                self._last_logged_model = model_for_task
+
+            self.active_model = model_for_task
+
         try:
             if client_type == "anthropic":
                 return await self._call_anthropic_with_tools(
@@ -613,6 +732,10 @@ Requirements:
         except Exception as e:
             self.logger.error(f"LLM call failed: {e}")
             raise
+        finally:
+            # Restore original model
+            if original_model is not None:
+                self.active_model = original_model
 
     async def _call_anthropic_with_tools(
         self, client, system_message, messages, tools, max_tokens
