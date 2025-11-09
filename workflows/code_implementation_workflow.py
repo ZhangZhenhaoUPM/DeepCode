@@ -418,15 +418,11 @@ Requirements:
 
             # Round logging removed
 
-            # Determine task type: switch to code_generation if we see analysis loops
-            is_in_loop = code_agent.is_in_analysis_loop()
-            task_type = "code_generation" if is_in_loop else "general"
-
-            if is_in_loop:
-                self.logger.warning(f"⚠️ ANALYSIS LOOP DETECTED - Forcing task_type=code_generation")
+            # Determine task type based on workflow phase
+            # Strategy: Use analysis model for planning, code model for implementation
+            task_type = self._determine_task_type_from_context(code_agent, iteration)
 
             # Call LLM with task type
-            self.logger.info(f"📞 Calling LLM with task_type={task_type}")
             response = await self._call_llm_with_tools(
                 client, client_type, current_system_message, messages, tools, task_type=task_type
             )
@@ -1020,6 +1016,36 @@ Requirements:
         return {"content": content, "tool_calls": tool_calls}
 
     # ==================== 5. Tools and Utility Methods (Utility Layer) ====================
+
+    def _determine_task_type_from_context(self, code_agent, iteration: int) -> str:
+        """
+        Intelligently determine task type based on current workflow context
+
+        Strategy:
+        1. Early iterations (1-3): Use analysis model for planning
+        2. After files are being implemented: Use code_generation model
+        3. Check for analysis loop: Force code_generation to break the loop
+
+        This minimizes model switching by batching similar operations together.
+        """
+        files_implemented = code_agent.get_files_implemented_count()
+        is_in_loop = code_agent.is_in_analysis_loop()
+
+        # Priority 1: Break analysis loops immediately
+        if is_in_loop:
+            self.logger.info(f"⚠️  Analysis loop detected → Forcing code_generation")
+            return "code_generation"
+
+        # Priority 2: Early iterations for planning (before any files written)
+        if iteration <= 3 and files_implemented == 0:
+            return "analysis"  # Use qwen3:32b for initial planning
+
+        # Priority 3: Active code generation phase
+        if files_implemented > 0:
+            return "code_generation"  # Use qwen3-coder:30b for writing code
+
+        # Default: analysis for initial understanding
+        return "analysis"
 
     def _validate_messages(self, messages: List[Dict]) -> List[Dict]:
         """Validate and clean message list"""
